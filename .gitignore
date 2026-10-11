@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+
+# Env
+.env
+
+# Generated native projects (Continuous Native Generation — prebuild recreates these in CI)
+ios/
+android/
+
+# Build outputs
+build/

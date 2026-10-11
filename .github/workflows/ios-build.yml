@@ -1,0 +1,201 @@
+name: Build iOS IPA (Rewards)
+
+# MANUAL TRIGGER ONLY: this workflow never runs on its own — it only spends
+# macOS minutes when someone clicks "Run workflow" in the Actions tab.
+#
+# HUMAN PREREQUISITES (do these first, or the upload step will fail):
+#   1. In App Store Connect, create the app record for bundle ID
+#      com.beatrackfaminc.rewards (this repo has no ASC app record yet —
+#      the TestFlight upload will fail until this exists).
+#   2. In Apple Developer / App Store Connect, create an API key and add
+#      these four repo secrets (Settings, Secrets and variables, Actions):
+#        ASC_API_KEY_ID, ASC_API_KEY_P8, ASC_API_ISSUER_ID, APPLE_TEAM_ID
+#
+# Pattern copied from the proven workflow in the main BeaTrackFam app repo
+# (Joeey1116/BeaTrackFam-Mobile-App/.github/workflows/ios-build.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_testflight:
+        description: 'Upload the IPA to App Store Connect (TestFlight) after building'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    name: Archive BeaTrackFam Rewards (Release)
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+
+      - name: Read app version and build number from app.json
+        run: |
+          echo "APP_VERSION=$(jq -r '.expo.version' app.json)" >> "$GITHUB_ENV"
+          echo "APP_BUILD=$(jq -r '.expo.ios.buildNumber' app.json)" >> "$GITHUB_ENV"
+
+      - name: Select the newest Xcode on the runner
+        # Newest is deliberate: the app stays on latest everything, and
+        # since Apr 28, 2026 App Store Connect uploads require Xcode 26 /
+        # iOS 26 SDK.
+        run: |
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$XC" ]; then XC="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"; fi
+          echo "Using $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+        env:
+          EXPO_NO_TELEMETRY: '1'
+
+      - name: Generate the native iOS project (expo prebuild)
+        # app.json is the source of truth for version/build number; prebuild
+        # stamps them into Info.plist on every run.
+        run: npx expo prebuild -p ios --no-install
+        env:
+          CI: 'true'
+          EXPO_NO_TELEMETRY: '1'
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: pod install
+
+      - name: Write the App Store Connect API key
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          KEY_FILE="$HOME/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
+          mkdir -p "$HOME/private_keys"
+          raw="$ASC_API_KEY_P8"
+          # Undo common paste accidents: surrounding quotes, CR characters,
+          # and literal \n sequences instead of real line breaks.
+          raw="${raw#\"}"; raw="${raw%\"}"
+          raw="${raw#\'}"; raw="${raw%\'}"
+          raw="$(printf '%s' "$raw" | tr -d '\r')"
+          if [[ "$raw" != *$'\n'* ]]; then
+            raw="$(printf '%s' "$raw" | sed 's/\\n/\n/g')"
+          fi
+          # If the BEGIN/END lines were lost, wrap the base64 body again.
+          if [[ "$raw" != *"BEGIN PRIVATE KEY"* ]]; then
+            body="$(printf '%s' "$raw" | tr -d '[:space:]')"
+            raw="$(printf -- '-----BEGIN PRIVATE KEY-----\n%s\n-----END PRIVATE KEY-----\n' "$(printf '%s' "$body" | fold -w 64)")"
+          fi
+          printf '%s\n' "$raw" > "$KEY_FILE"
+          if ! openssl pkey -in "$KEY_FILE" -noout 2>/dev/null; then
+            echo "::error::The ASC_API_KEY_P8 secret is not a valid .p8 key. Re-paste the full contents of the .p8 file from App Store Connect, including the BEGIN/END lines."
+            exit 1
+          fi
+
+      - name: Archive the app (automatic signing via API key)
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild archive \
+            -workspace ios/BeaTrackFamRewards.xcworkspace \
+            -scheme BeaTrackFamRewards \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$GITHUB_WORKSPACE/build/BeaTrackFamRewards.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_API_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_API_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic
+
+      - name: Export the IPA
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cat > "$GITHUB_WORKSPACE/build/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadBitcode</key>
+            <false/>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>provisioningProfiles</key>
+            <dict/>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$GITHUB_WORKSPACE/build/BeaTrackFamRewards.xcarchive" \
+            -exportPath "$GITHUB_WORKSPACE/build/ipa" \
+            -exportOptionsPlist "$GITHUB_WORKSPACE/build/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_API_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
+
+      - name: Upload the IPA as a run artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: BeaTrackFamRewards-${{ env.APP_VERSION }}-${{ env.APP_BUILD }}-ipa
+          path: build/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload the build to App Store Connect (TestFlight)
+        # Requires the ASC app record for com.beatrackfaminc.rewards to
+        # exist (see the header comment) — this step fails until Joey
+        # creates it.
+        if: inputs.upload_to_testflight
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+        run: |
+          IPA="$(ls "$GITHUB_WORKSPACE"/build/ipa/*.ipa | head -1)"
+          echo "Uploading $IPA to App Store Connect..."
+          # altool looks for AuthKey_<id>.p8 in ~/.appstoreconnect/private_keys
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          cp "$HOME/private_keys/AuthKey_${ASC_API_KEY_ID}.p8" "$HOME/.appstoreconnect/private_keys/"
+          ok=""
+          for attempt in 1 2 3; do
+            echo "Upload attempt $attempt of 3..."
+            if xcrun altool --upload-app --type ios --file "$IPA" \
+                 --apiKey "$ASC_API_KEY_ID" --apiIssuer "$ASC_API_ISSUER_ID"; then
+              ok=1; break
+            fi
+            sleep 20
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::TestFlight upload failed after 3 attempts. The IPA is still saved as a run artifact above — upload that file in Transporter instead."
+            exit 1
+          fi
+          echo "Uploaded. Apple processes the build (usually ~5-30 min), then it appears in TestFlight."
+
+      - name: Remove the API key
+        if: always()
+        run: rm -rf "$HOME/private_keys"
