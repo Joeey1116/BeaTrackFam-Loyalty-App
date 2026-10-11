@@ -70,29 +70,6 @@ jobs:
           CI: 'true'
           EXPO_NO_TELEMETRY: '1'
 
-      - name: Set provisioning profiles per target
-        run: |
-          python3 << 'PYEOF'
-          import glob, re
-          pbx = glob.glob('ios/*.xcodeproj/project.pbxproj')[0]
-          with open(pbx) as f: text = f.read()
-          # For each Release XCBuildConfiguration, set the right profile by bundle ID
-          def fix_bundle(bundle, profile):
-              nonlocal text
-              # Find config blocks containing this bundle ID and name=Release
-              pattern = r'([A-F0-9]{24} /\* Release \*/ = \{\s*isa = XCBuildConfiguration;\s*buildSettings = \{[^}]*?PRODUCT_BUNDLE_IDENTIFIER = ' + re.escape(bundle) + r';[^}]*?)(\};)'
-              def add_profile(m):
-                  block = m.group(1)
-                  if 'PROVISIONING_PROFILE_SPECIFIER' not in block:
-                      block += f'\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "{profile}";'
-                  return block + m.group(2)
-              text = re.sub(pattern, add_profile, text, flags=re.DOTALL)
-          fix_bundle('com.beatrackfaminc.rewards', 'BeaTrackFam Rewards App Store')
-          fix_bundle('com.beatrackfaminc.rewards.widgets', 'BeaTrackFam Rewards Widgets App Store')
-          with open(pbx, 'w') as f: f.write(text)
-          print("done")
-          PYEOF
-
       - name: Install CocoaPods
         working-directory: ios
         run: pod install
@@ -154,8 +131,7 @@ jobs:
             -authenticationKeyID "$ASC_API_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_API_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="iPhone Distribution" \
+            CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
 
       - name: Export the IPA
@@ -174,7 +150,7 @@ jobs:
             <key>teamID</key>
             <string>${APPLE_TEAM_ID}</string>
             <key>signingStyle</key>
-            <string>manual</string>
+            <string>automatic</string>
             <key>manageAppVersionAndBuildNumber</key>
             <false/>
             <key>compileBitcode</key>
@@ -183,13 +159,6 @@ jobs:
             <false/>
             <key>uploadSymbols</key>
             <true/>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>com.beatrackfaminc.rewards</key>
-              <string>BeaTrackFam Rewards App Store</string>
-              <key>com.beatrackfaminc.rewards.widgets</key>
-              <string>BeaTrackFam Rewards Widgets App Store</string>
-            </dict>
           </dict>
           </plist>
           PLIST

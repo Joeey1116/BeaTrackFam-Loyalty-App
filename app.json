@@ -62,15 +62,7 @@
           "userTrackingPermission": "This identifier is used to personalize your BeaTrackFam Rewards experience. We run no ads and no third-party trackers \u2014 it stays off unless you turn it on."
         }
       ],
-      "./plugins/with-privacy-manifest",
-      [
-        "expo-widgets",
-        {
-          "bundleIdentifier": "com.beatrackfaminc.rewards.widgets",
-          "groupIdentifier": "group.com.beatrackfaminc.rewards",
-          "frequentUpdates": true
-        }
-      ]
+      "./plugins/with-privacy-manifest"
     ],
     "scheme": "beatrackfamrewards",
     "slug": "beatrackfam-rewards",
