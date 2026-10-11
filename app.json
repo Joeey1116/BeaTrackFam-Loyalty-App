@@ -6,10 +6,11 @@
         "foregroundImage": "./assets/icon.png"
       },
       "package": "com.beatrackfaminc.rewards",
-      "permissions": [
+      "permissions": [],
+      "versionCode": 2,
+      "blockedPermissions": [
         "com.google.android.gms.permission.AD_ID"
-      ],
-      "versionCode": 1
+      ]
     },
     "extra": {
       "eas": {
