@@ -54,6 +54,18 @@ export default function Rewards() {
             setRedeeming(null);
             if (result.ok && result.code) {
               setCode(result.code);
+              // Milestone reached — close out the Live Activity with a win.
+              try {
+                const { endMilestoneActivity } = await import('../../lib/liveActivity');
+                await endMilestoneActivity({
+                  points: reward.cost,
+                  target: reward.cost,
+                  rewardName: 'Reward unlocked!',
+                  expiresText: '',
+                });
+              } catch {
+                // Live Activities unavailable — silent no-op.
+              }
               await refresh();
             } else {
               Alert.alert('Hmm', result.error ?? 'Could not redeem. Try again.');

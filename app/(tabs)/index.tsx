@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { PointsCard } from '../../components/PointsCard';
 import { TierBar } from '../../components/TierBar';
+import { GlassCard } from '../../components/GlassCard';
 import {
   DEMO_USER_ID,
   getLedger,
@@ -12,7 +13,27 @@ import {
   type LedgerEntry,
   type Profile,
 } from '../../lib/loyalty';
-import { registerForPushNotificationsAsync } from '../../lib/notifications';
+import { registerForPushNotificationsAsync, savePushToken } from '../../lib/notifications';
+
+const PUSH_PROMPT_KEY = 'btr_push_prompt_seen';
+
+async function hasSeenPushPrompt(): Promise<boolean> {
+  try {
+    const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+    return (await AsyncStorage.getItem(PUSH_PROMPT_KEY)) === '1';
+  } catch {
+    return true; // Storage unavailable — don't nag.
+  }
+}
+
+async function markPushPromptSeen(): Promise<void> {
+  try {
+    const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+    await AsyncStorage.setItem(PUSH_PROMPT_KEY, '1');
+  } catch {
+    // Best effort.
+  }
+}
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -23,14 +44,23 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showPushPrompt, setShowPushPrompt] = useState(false);
+  const uidRef = useRef<string>(DEMO_USER_ID);
 
   const load = useCallback(async () => {
     try {
       const sessionId = await getSessionUserId();
       const uid = sessionId ?? DEMO_USER_ID;
+      uidRef.current = uid;
       const [p, l] = await Promise.all([getProfile(uid), getLedger(uid)]);
       setProfile(p);
       setLedger(l.slice(0, 5));
+      // Keep the points-milestone Live Activity in sync (iOS 16.2+, no-op elsewhere).
+      if (p) {
+        import('../../lib/liveActivity')
+          .then(({ syncMilestoneActivity }) => syncMilestoneActivity(p.points))
+          .catch(() => {});
+      }
     } catch {
       // Demo fallback keeps the screen alive even if something goes wrong.
     } finally {
@@ -40,9 +70,37 @@ export default function Home() {
 
   useEffect(() => {
     load();
-    // Fire and forget — never blocks the screen.
-    registerForPushNotificationsAsync().catch(() => {});
   }, [load]);
+
+  // First-launch push permission: we ask with our own explainer first,
+  // so the OS prompt never blindsides anyone. Shown exactly once.
+  useEffect(() => {
+    if (loading) return;
+    hasSeenPushPrompt().then((seen) => {
+      if (!seen) setShowPushPrompt(true);
+    });
+  }, [loading]);
+
+  const handlePushChoice = useCallback(async (enable: boolean) => {
+    setShowPushPrompt(false);
+    await markPushPromptSeen();
+    if (!enable) return;
+    try {
+      const token = await registerForPushNotificationsAsync();
+      if (token) await savePushToken(uidRef.current, token);
+    } catch {
+      // Permission denied or unavailable — the app works fine without it.
+    }
+  }, []);
+
+  const openShop = useCallback(async () => {
+    try {
+      const { openBrowserAsync } = await import('expo-web-browser');
+      await openBrowserAsync('https://beatrackfam.info');
+    } catch {
+      // Browser unavailable — the Earn tab's shop link is the fallback.
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -65,6 +123,17 @@ export default function Home() {
       <PointsCard points={points} tier={tierFor(points)} />
       <TierBar points={points} />
 
+      <GlassCard style={styles.shopCard}>
+        <Text style={styles.shopLabel}>BEATRACKFAM.INFO</Text>
+        <Text style={styles.shopTitle}>Fresh drops, fam favorites.</Text>
+        <Text style={styles.shopText}>
+          Every order earns 25 pts — from the maker of BeaTrackFam.
+        </Text>
+        <TouchableOpacity style={styles.shopButton} onPress={openShop} activeOpacity={0.8}>
+          <Text style={styles.shopButtonText}>SHOP NOW</Text>
+        </TouchableOpacity>
+      </GlassCard>
+
       <Text style={styles.sectionTitle}>RECENT ACTIVITY</Text>
       {ledger.length === 0 ? (
         <Text style={styles.empty}>Nothing yet — go earn your first points.</Text>
@@ -81,6 +150,28 @@ export default function Home() {
           </View>
         ))
       )}
+
+      <Modal visible={showPushPrompt} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>STAY IN THE LOOP.</Text>
+            <Text style={styles.modalText}>
+              Want a heads-up when new rewards drop or you hit a points milestone?
+              We keep it to the good stuff — no spam, ever.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalPrimary}
+              onPress={() => handlePushChoice(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalPrimaryText}>TURN ON NOTIFICATIONS</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handlePushChoice(false)} activeOpacity={0.7}>
+              <Text style={styles.modalSecondary}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -90,6 +181,12 @@ const styles = StyleSheet.create({
   greeting: { color: '#ffffff', fontSize: 30, fontWeight: '800', letterSpacing: 1, marginTop: 12 },
   subgreeting: { color: '#888888', fontSize: 15, fontStyle: 'italic', marginTop: 6, marginBottom: 20 },
   sectionTitle: { color: '#888888', fontSize: 12, fontWeight: '700', letterSpacing: 3, marginBottom: 12 },
+  shopCard: { marginBottom: 20, paddingVertical: 22 },
+  shopLabel: { color: '#888888', fontSize: 11, fontWeight: '800', letterSpacing: 3, textAlign: 'center' },
+  shopTitle: { color: '#ffffff', fontSize: 22, fontWeight: '800', letterSpacing: 1, textAlign: 'center', marginTop: 8 },
+  shopText: { color: '#aaaaaa', fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 8, marginBottom: 16 },
+  shopButton: { backgroundColor: '#ffffff', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  shopButtonText: { color: '#000000', fontSize: 14, fontWeight: '800', letterSpacing: 2 },
   empty: { color: '#666666', fontSize: 14, lineHeight: 20 },
   row: {
     flexDirection: 'row',
@@ -106,4 +203,32 @@ const styles = StyleSheet.create({
   rowDate: { color: '#666666', fontSize: 12, marginTop: 2 },
   rowDelta: { color: '#ffffff', fontSize: 16, fontWeight: '800' },
   rowDeltaNeg: { color: '#ff9999' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    backgroundColor: '#141414',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    padding: 24,
+    alignItems: 'center',
+    width: '100%',
+  },
+  modalTitle: { color: '#ffffff', fontSize: 22, fontWeight: '800', letterSpacing: 1, marginBottom: 12 },
+  modalText: { color: '#aaaaaa', fontSize: 14, lineHeight: 21, textAlign: 'center', marginBottom: 20 },
+  modalPrimary: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 12,
+  },
+  modalPrimaryText: { color: '#000000', fontSize: 13, fontWeight: '800', letterSpacing: 2 },
+  modalSecondary: { color: '#888888', fontSize: 14, fontWeight: '600', paddingVertical: 8 },
 });

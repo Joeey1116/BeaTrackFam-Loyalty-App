@@ -81,6 +81,40 @@ export default function ProfileScreen() {
     router.replace('/onboarding');
   };
 
+  const [trackingStatus, setTrackingStatus] = useState<string | null>(null);
+
+  const checkTracking = async () => {
+    try {
+      const { getTrackingPermissionsAsync } = await import('expo-tracking-transparency');
+      const { status } = await getTrackingPermissionsAsync();
+      setTrackingStatus(status);
+    } catch {
+      setTrackingStatus('unavailable');
+    }
+  };
+
+  useEffect(() => {
+    checkTracking();
+  }, []);
+
+  const requestTracking = async () => {
+    // We run zero ads and zero third-party tracking SDKs, so this prompt
+    // only ever fires when YOU tap this row. Nothing is tracked otherwise.
+    try {
+      const { requestTrackingPermissionsAsync } = await import('expo-tracking-transparency');
+      const { status } = await requestTrackingPermissionsAsync();
+      setTrackingStatus(status);
+      Alert.alert(
+        status === 'granted' ? 'All set.' : 'No problem.',
+        status === 'granted'
+          ? 'You allowed tracking. You can change this anytime in Settings.'
+          : 'Tracking stays off. Nothing about the app changes.',
+      );
+    } catch {
+      Alert.alert('Hmm', 'Could not open the tracking prompt on this device.');
+    }
+  };
+
   if (loading) {
     return (
       <Screen>
@@ -145,6 +179,23 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </>
         )}
+      </View>
+
+      <Text style={styles.sectionTitle}>PRIVACY</Text>
+      <View style={styles.card}>
+        <Text style={styles.cardLabel}>NOTIFICATIONS</Text>
+        <Text style={styles.hint}>
+          Reward drops, points milestones, and referral alerts. Manage anytime in your phone settings.
+        </Text>
+        <Text style={styles.cardLabel}>APP TRACKING</Text>
+        <Text style={styles.hint}>
+          We run no ads and no third-party tracking SDKs. This stays off unless you turn it on.
+        </Text>
+        <TouchableOpacity style={styles.secondary} onPress={requestTracking} activeOpacity={0.8}>
+          <Text style={styles.secondaryText}>
+            {trackingStatus === 'granted' ? 'TRACKING: ON' : 'ALLOW TRACKING'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <Text style={styles.sectionTitle}>POINTS HISTORY</Text>
@@ -232,6 +283,15 @@ const styles = StyleSheet.create({
   primary: { backgroundColor: '#ffffff', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   primaryDisabled: { opacity: 0.4 },
   primaryText: { color: '#000000', fontSize: 14, fontWeight: '800', letterSpacing: 2 },
+  secondary: {
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#3a3a3a',
+    marginTop: 4,
+  },
+  secondaryText: { color: '#ffffff', fontSize: 13, fontWeight: '800', letterSpacing: 2 },
   sectionTitle: { color: '#888888', fontSize: 12, fontWeight: '700', letterSpacing: 3, marginBottom: 12, marginTop: 8 },
   empty: { color: '#666666', fontSize: 14 },
   row: {

@@ -22,7 +22,8 @@
       "bundleIdentifier": "com.beatrackfaminc.rewards",
       "deploymentTarget": "16.4",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSUserNotificationsUsageDescription": "BeaTrackFam Rewards sends you alerts about new rewards, points milestones, and drops."
       },
       "supportsTablet": true
     },
@@ -31,6 +32,7 @@
     "plugins": [
       "expo-router",
       "expo-font",
+      "expo-web-browser",
       [
         "expo-notifications",
         {
@@ -51,6 +53,21 @@
           "ios": {
             "deploymentTarget": "16.4"
           }
+        }
+      ],
+      [
+        "expo-tracking-transparency",
+        {
+          "userTrackingPermission": "This identifier is used to personalize your BeaTrackFam Rewards experience. We run no ads and no third-party trackers \u2014 it stays off unless you turn it on."
+        }
+      ],
+      "./plugins/with-privacy-manifest",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.beatrackfaminc.rewards.widgets",
+          "groupIdentifier": "group.com.beatrackfaminc.rewards",
+          "frequentUpdates": true
         }
       ]
     ],

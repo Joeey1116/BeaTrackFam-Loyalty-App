@@ -34,7 +34,12 @@ export default function Earn() {
     refresh();
   }, [refresh]);
 
-  const grant = async (actionId: string | null, points: number, reason: string) => {
+  const grant = async (
+    actionId: string | null,
+    points: number,
+    reason: string,
+    alreadyMsg?: string,
+  ) => {
     if (busy) return;
     setBusy(true);
     try {
@@ -42,7 +47,7 @@ export default function Earn() {
       if (result.ok && !result.error) {
         Alert.alert('Nice.', `+${points} pts added. Keep going.`);
       } else if (result.error === 'already-claimed') {
-        Alert.alert('Already claimed', 'You already grabbed these points.');
+        Alert.alert('Already claimed', alreadyMsg ?? 'You already grabbed these points.');
       } else {
         Alert.alert('Hmm', result.error ?? 'Could not add points. Try again.');
       }
@@ -65,13 +70,22 @@ export default function Earn() {
       id: 'purchase',
       icon: '🛍️',
       title: 'Make a purchase',
-      subtitle: 'Shop at beatrackfam.info — 25 pts per order, automatically.',
+      subtitle: 'Shop at beatrackfam.info — 25 pts per order day, claimed when you check out.',
       points: 25,
       buttonLabel: 'SHOP',
       repeatable: true,
       run: async () => {
-        await openLink('https://beatrackfam.info');
-        await grant(null, 25, 'Order placed at beatrackfam.info');
+        // In-app browser (expo-web-browser). When they close it, offer the
+        // daily order claim — one per day, tracked by date-scoped action ID.
+        // (v2: replace with automatic Shopify order webhooks.)
+        try {
+          const { openBrowserAsync } = await import('expo-web-browser');
+          await openBrowserAsync('https://beatrackfam.info');
+        } catch {
+          await openLink('https://beatrackfam.info');
+        }
+        const today = new Date().toISOString().slice(0, 10);
+        await grant(`order-${today}`, 25, 'Order placed at beatrackfam.info', 'One order claim per day — see you tomorrow.');
       },
     },
     {

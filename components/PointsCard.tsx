@@ -1,25 +1,22 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import type { TierInfo } from '../lib/loyalty';
+import { GlassCard } from './GlassCard';
 
 export function PointsCard({ points, tier }: { points: number; tier: TierInfo }) {
   return (
-    <View style={styles.card}>
+    <GlassCard style={styles.card}>
       <Text style={styles.label}>MY POINTS</Text>
       <Text style={styles.points}>{points.toLocaleString()}</Text>
       <Text style={styles.tier}>{tier.name} TIER</Text>
-    </View>
+    </GlassCard>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#111111',
-    borderRadius: 20,
     paddingVertical: 28,
     paddingHorizontal: 24,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginBottom: 20,
   },
   label: { color: '#888888', fontSize: 12, fontWeight: '700', letterSpacing: 3 },

@@ -18,6 +18,10 @@ How to set up the app's database and keys. Do this once, in order.
    - Copy everything in `supabase/seed.sql`, paste it, and click **Run**.
    - This adds the 4 starting rewards (10% off, free shipping, $10 off, free tee).
 
+3b. **Add push-token storage** (one more small file)
+   - Clear the editor again, copy everything in `supabase/migration_push_token.sql`, paste, and click **Run**.
+   - This adds the `push_token` column so the app can send you reward/drop alerts.
+
 4. **Copy your keys into the app**
    - In the Supabase dashboard, go to **Project Settings → API**.
    - Copy the **Project URL** and the **anon public** key.
