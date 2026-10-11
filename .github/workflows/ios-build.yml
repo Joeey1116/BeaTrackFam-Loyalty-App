@@ -107,6 +107,13 @@ jobs:
           P12_PW: ${{ secrets.IOS_DISTRIBUTION_PASSWORD }}
         run: |
           printf '%s' "$P12_B64" | base64 -d > "$RUNNER_TEMP/dist.p12"
+          echo "Decoded p12 size: $(wc -c < "$RUNNER_TEMP/dist.p12") bytes (expect ~3203)"
+          echo "B64 length: ${#P12_B64} chars (expect 4272)"
+          if ! openssl pkcs12 -in "$RUNNER_TEMP/dist.p12" -password pass:"$P12_PW" -nokeys >/dev/null 2>&1; then
+            echo "::error::The .p12 failed openssl verification — the IOS_DISTRIBUTION_P12 secret or IOS_DISTRIBUTION_PASSWORD is wrong."
+            exit 1
+          fi
+          echo "OpenSSL verified the .p12 successfully."
           security create-keychain -p actions build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p actions build.keychain
