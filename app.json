@@ -19,12 +19,13 @@
     },
     "icon": "./assets/icon.png",
     "ios": {
-      "buildNumber": "1",
+      "buildNumber": "2",
       "bundleIdentifier": "com.beatrackfaminc.rewards",
       "deploymentTarget": "16.4",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSUserNotificationsUsageDescription": "BeaTrackFam Rewards sends you alerts about new rewards, points milestones, and drops."
+        "NSUserNotificationsUsageDescription": "BeaTrackFam Rewards sends you alerts about new rewards, points milestones, and drops.",
+        "UIDesignRequiresCompatibility": false
       },
       "supportsTablet": true
     },

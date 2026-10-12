@@ -69,6 +69,16 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      - name: Load Supabase config from eas.json
+        # The release build needs EXPO_PUBLIC_SUPABASE_* at bundle time.
+        # Values live in eas.json (public anon key); single source of truth.
+        run: |
+          URL="$(python3 -c "import json; print(json.load(open('eas.json'))['build']['production']['env']['EXPO_PUBLIC_SUPABASE_URL'])")"
+          KEY="$(python3 -c "import json; print(json.load(open('eas.json'))['build']['production']['env']['EXPO_PUBLIC_SUPABASE_ANON_KEY'])")"
+          echo "EXPO_PUBLIC_SUPABASE_URL=$URL" >> "$GITHUB_ENV"
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=$KEY" >> "$GITHUB_ENV"
+          echo "Supabase URL configured: ${URL:0:30}..."
+
       - name: Generate the native Android project (expo prebuild)
         env:
           CI: 'true'
