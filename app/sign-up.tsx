@@ -36,12 +36,23 @@ export default function SignUp() {
         setError(signUpError.message);
         return;
       }
+      // Supabase may require email confirmation — then there is no session yet
+      // and we must NOT try to touch the database (RLS would reject it).
+      if (!data.session) {
+        setInfo('Account created — check your email to confirm it, then sign in.');
+        return;
+      }
       const user = data.user;
       if (!user) {
         setInfo('Check your email to confirm your account, then sign in.');
         return;
       }
-      await ensureProfile(user.id, email.trim());
+      try {
+        await ensureProfile(user.id, email.trim());
+      } catch (profileError: any) {
+        setError(profileError?.message ?? 'Could not set up your profile. Try signing in.');
+        return;
+      }
       if (referralCode.trim()) {
         const result = await applyReferral(user.id, referralCode);
         if (result.ok) {

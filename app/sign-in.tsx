@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Screen } from '../components/Screen';
 import { Logo } from '../components/Logo';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { ensureProfile } from '../lib/loyalty';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -20,13 +21,19 @@ export default function SignIn() {
     }
     setLoading(true);
     try {
-      const { error: signInError } = await supabase!.auth.signInWithPassword({
+      const { data, error: signInError } = await supabase!.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
       if (signInError) {
         setError(signInError.message);
       } else {
+        // Make sure the loyalty profile exists (covers users who confirmed via email).
+        try {
+          if (data.user) await ensureProfile(data.user.id, email.trim());
+        } catch {
+          // Non-fatal: the home tab will show a signed-in state regardless.
+        }
         router.replace('/(tabs)');
       }
     } catch {
