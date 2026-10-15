@@ -1,4 +1,5 @@
 import 'react-native-url-polyfill/auto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
@@ -8,7 +9,17 @@ let client: SupabaseClient | null = null;
 
 if (url && anonKey) {
   try {
-    client = createClient(url, anonKey);
+    client = createClient(url, anonKey, {
+      auth: {
+        // React Native has no localStorage: without an explicit storage
+        // adapter the session lives only in memory and is lost every time
+        // the app closes (user lands back on onboarding after a restart).
+        storage: AsyncStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    });
   } catch {
     client = null;
   }
