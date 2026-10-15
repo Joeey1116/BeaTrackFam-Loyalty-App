@@ -2,12 +2,17 @@ import { useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Alert, Platform } from 'react-native';
+import * as Linking from 'expo-linking';
 import {
   addNotificationTapListener,
   getInitialNotificationTarget,
   setupForegroundPresentation,
   type NotificationTarget,
 } from '../lib/notifications';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { markPasswordResetPending } from '../lib/passwordReset';
+import { markEmailConfirmedPending } from '../lib/emailConfirmed';
+import { ensureProfile } from '../lib/loyalty';
 
 // Global JS error handler: in release builds a fatal error would otherwise
 // kill the app silently. Showing the message lets us diagnose from a
@@ -47,6 +52,101 @@ const TARGET_ROUTES: Record<NotificationTarget, string> = {
   profile: '/(tabs)/profile',
 };
 
+const RESET_URL_PREFIX = 'beatrackfamrewards://reset-password';
+const CONFIRMED_URL_PREFIX = 'beatrackfamrewards://confirmed';
+
+/** Pull query + fragment params out of a deep-link URL. */
+function getUrlParams(url: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  const qIndex = url.indexOf('?');
+  const hIndex = url.indexOf('#');
+  const query = qIndex >= 0 ? url.slice(qIndex + 1, hIndex >= 0 ? hIndex : undefined) : '';
+  const fragment = hIndex >= 0 ? url.slice(hIndex + 1) : '';
+  for (const part of `${query}&${fragment}`.split('&')) {
+    const eq = part.indexOf('=');
+    if (eq > 0) {
+      params[decodeURIComponent(part.slice(0, eq))] = decodeURIComponent(part.slice(eq + 1));
+    }
+  }
+  return params;
+}
+
+/**
+ * Handle an incoming password-reset deep link: flag it so the auth gate
+ * routes to the reset screen, exchange the recovery code/token for a
+ * session, and navigate there directly when the router is ready
+ * (warm case). On cold start the auth gate picks up the flag.
+ */
+async function handlePasswordResetUrl(url: string, router: ReturnType<typeof useRouter>) {
+  if (!isSupabaseConfigured() || !supabase) return;
+  markPasswordResetPending();
+  try {
+    const params = getUrlParams(url);
+    if (params.code) {
+      // PKCE flow (supabase-js v2 default).
+      await supabase.auth.exchangeCodeForSession(params.code);
+    } else if (params.access_token && params.refresh_token) {
+      // Implicit flow fallback.
+      await supabase.auth.setSession({
+        access_token: params.access_token,
+        refresh_token: params.refresh_token,
+      });
+    }
+  } catch {
+    // The reset screen shows the invalid/expired state when no session exists.
+  }
+  try {
+    router.push('/reset-password');
+  } catch {
+    // Router not ready yet (cold start) — the auth gate routes via the flag.
+  }
+}
+
+/**
+ * Handle an incoming signup-confirmation deep link: exchange the
+ * confirmation code/token for a session, make sure the loyalty profile
+ * exists (same as the sign-in flow), flag the one-time welcome message,
+ * and land in the main app. On cold start the auth gate routes via the
+ * session once the exchange completes.
+ */
+async function handleConfirmedUrl(url: string, router: ReturnType<typeof useRouter>) {
+  if (!isSupabaseConfigured() || !supabase) return;
+  markEmailConfirmedPending();
+  try {
+    const params = getUrlParams(url);
+    let userId: string | null = null;
+    let userEmail = '';
+    if (params.code) {
+      // PKCE flow (supabase-js v2 default).
+      const { data } = await supabase.auth.exchangeCodeForSession(params.code);
+      userId = data.user?.id ?? null;
+      userEmail = data.user?.email ?? '';
+    } else if (params.access_token && params.refresh_token) {
+      // Implicit flow fallback.
+      const { data } = await supabase.auth.setSession({
+        access_token: params.access_token,
+        refresh_token: params.refresh_token,
+      });
+      userId = data.user?.id ?? null;
+      userEmail = data.user?.email ?? '';
+    }
+    if (userId) {
+      try {
+        await ensureProfile(userId, userEmail);
+      } catch {
+        // Non-fatal: the home tab shows a signed-in state regardless.
+      }
+    }
+  } catch {
+    // No session established — the tabs still load; the welcome message is skipped.
+  }
+  try {
+    router.push('/(tabs)');
+  } catch {
+    // Router not ready yet (cold start) — the auth gate routes via the session.
+  }
+}
+
 export default function RootLayout() {
   const router = useRouter();
 
@@ -70,7 +170,32 @@ export default function RootLayout() {
 
     // Warm taps: app already running (foreground or background).
     const unsubscribe = addNotificationTapListener(go);
-    return unsubscribe;
+
+    // Password-reset deep links.
+    // Cold start: app launched from the reset link in the email.
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url && url.startsWith(RESET_URL_PREFIX)) {
+          handlePasswordResetUrl(url, router);
+        } else if (url && url.startsWith(CONFIRMED_URL_PREFIX)) {
+          handleConfirmedUrl(url, router);
+        }
+      })
+      .catch(() => {});
+
+    // Warm: link opened while the app is already running.
+    const linkSub = Linking.addEventListener('url', ({ url }) => {
+      if (url.startsWith(RESET_URL_PREFIX)) {
+        handlePasswordResetUrl(url, router);
+      } else if (url.startsWith(CONFIRMED_URL_PREFIX)) {
+        handleConfirmedUrl(url, router);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      linkSub.remove();
+    };
   }, [router]);
 
   return (
@@ -87,6 +212,7 @@ export default function RootLayout() {
         <Stack.Screen name="onboarding" />
         <Stack.Screen name="sign-in" />
         <Stack.Screen name="sign-up" />
+        <Stack.Screen name="reset-password" />
         <Stack.Screen name="(tabs)" />
       </Stack>
     </>

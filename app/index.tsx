@@ -3,6 +3,8 @@ import { StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Logo } from '../components/Logo';
 import { getSessionUserId } from '../lib/loyalty';
+import { takePasswordResetPending } from '../lib/passwordReset';
+import { isEmailConfirmedPending, takeEmailConfirmedPending } from '../lib/emailConfirmed';
 
 /**
  * Auth gate: brief branded splash, then route to the tabs for signed-in
@@ -16,6 +18,37 @@ export default function AuthGate() {
       // Let the branding breathe for a moment.
       await new Promise((resolve) => setTimeout(resolve, 1200));
       if (cancelled) return;
+      // A password-reset deep link launched the app — the recovery session
+      // must land on the reset screen, not bounce into the tabs.
+      if (takePasswordResetPending()) {
+        router.replace('/reset-password');
+        return;
+      }
+      // A signup-confirmation deep link launched the app — the layout is
+      // exchanging the confirmation code for a session right now. Wait for
+      // it (bounded) instead of bouncing a signed-in user to onboarding.
+      if (isEmailConfirmedPending()) {
+        for (let i = 0; i < 10; i++) {
+          let id: string | null = null;
+          try {
+            id = await getSessionUserId();
+          } catch {
+            id = null;
+          }
+          if (id || cancelled) break;
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+        if (cancelled) return;
+        // The exchange never produced a session (expired/invalid link) —
+        // drop the stale flag so a later normal sign-in doesn't show it.
+        let confirmedId: string | null = null;
+        try {
+          confirmedId = await getSessionUserId();
+        } catch {
+          confirmedId = null;
+        }
+        if (!confirmedId) takeEmailConfirmedPending();
+      }
       let userId: string | null = null;
       try {
         userId = await getSessionUserId();

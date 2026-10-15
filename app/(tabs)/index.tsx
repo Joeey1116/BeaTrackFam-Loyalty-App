@@ -14,6 +14,7 @@ import {
   type Profile,
 } from '../../lib/loyalty';
 import { registerForPushNotificationsAsync, savePushToken } from '../../lib/notifications';
+import { takeEmailConfirmedPending } from '../../lib/emailConfirmed';
 
 const PUSH_PROMPT_KEY = 'btr_push_prompt_seen';
 
@@ -45,6 +46,7 @@ export default function Home() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
   const uidRef = useRef<string>(DEMO_USER_ID);
 
   const load = useCallback(async () => {
@@ -70,6 +72,8 @@ export default function Home() {
 
   useEffect(() => {
     load();
+    // One-time welcome after confirming the email via the deep link.
+    if (takeEmailConfirmedPending()) setShowWelcome(true);
   }, [load]);
 
   // First-launch push permission: we ask with our own explainer first,
@@ -117,6 +121,16 @@ export default function Home() {
 
   return (
     <Screen>
+      {showWelcome && (
+        <TouchableOpacity
+          style={styles.welcomeBanner}
+          onPress={() => setShowWelcome(false)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.welcomeTitle}>EMAIL CONFIRMED — WELCOME TO THE FAM.</Text>
+          <Text style={styles.welcomeText}>Your account is live. Start earning points.</Text>
+        </TouchableOpacity>
+      )}
       <Text style={styles.greeting}>Hey {firstName}.</Text>
       <Text style={styles.subgreeting}>Thank God you're part of the Fam.</Text>
 
@@ -178,6 +192,17 @@ export default function Home() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 120 },
+  welcomeBanner: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    alignItems: 'center',
+  },
+  welcomeTitle: { color: '#000000', fontSize: 14, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
+  welcomeText: { color: '#333333', fontSize: 13, marginTop: 4, textAlign: 'center' },
   greeting: { color: '#ffffff', fontSize: 30, fontWeight: '800', letterSpacing: 1, marginTop: 12 },
   subgreeting: { color: '#888888', fontSize: 15, fontStyle: 'italic', marginTop: 6, marginBottom: 20 },
   sectionTitle: { color: '#888888', fontSize: 12, fontWeight: '700', letterSpacing: 3, marginBottom: 12 },
