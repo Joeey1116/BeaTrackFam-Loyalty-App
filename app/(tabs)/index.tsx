@@ -57,12 +57,12 @@ export default function Home() {
       const [p, l] = await Promise.all([getProfile(uid), getLedger(uid)]);
       setProfile(p);
       setLedger(l.slice(0, 5));
-      // Keep the points-milestone Live Activity in sync (iOS 16.2+, no-op elsewhere).
-      if (p) {
-        import('../../lib/liveActivity')
-          .then(({ syncMilestoneActivity }) => syncMilestoneActivity(p.points))
-          .catch(() => {});
-      }
+      // Live Activities auto-start is DISABLED (Oct 15 2026): expo-widgets'
+      // PointsActivity.start() hard-crashes on device ~1s after the Home tab
+      // loads (ActivityKit request with the widget extension not fully
+      // configured — App Groups etc.). The tab bar renders fine, so the
+      // crash is in this post-load async path. Re-enable only after
+      // expo-widgets is fully configured and verified on a device build.
     } catch {
       // Demo fallback keeps the screen alive even if something goes wrong.
     } finally {
