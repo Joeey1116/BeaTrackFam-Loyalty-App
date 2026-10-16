@@ -13,7 +13,9 @@ import {
   type LedgerEntry,
   type Profile,
 } from '../../lib/loyalty';
-import { registerForPushNotificationsAsync, savePushToken } from '../../lib/notifications';
+// NOTE: lib/notifications intentionally NOT imported here. Its
+// requestPermissionsAsync() path hard-crashes on device (Oct 2026);
+// the push prompt now deep-links to iOS Settings instead.
 import { takeEmailConfirmedPending } from '../../lib/emailConfirmed';
 
 const PUSH_PROMPT_KEY = 'btr_push_prompt_seen';
@@ -87,8 +89,9 @@ export default function Home() {
   }, [load]);
 
   // First-launch push permission: our own explainer first, so the OS prompt
-  // never blindsides anyone. Shown exactly once. Re-enabled Oct 15 2026
-  // (build 10) with a crash-safe flow — see handlePushChoice.
+  // never blindsides anyone. Shown exactly once. "TURN ON" deep-links to
+  // iOS Settings (build 12) — the in-app native permission request
+  // hard-crashes on device, so we never call it.
   useEffect(() => {
     if (loading) return;
     hasSeenPushPrompt().then((seen) => {
@@ -131,15 +134,17 @@ export default function Home() {
     setShowPushPrompt(false);
     await markPushPromptSeen();
     if (!enable) return;
+    // Build 10's in-app native permission request still hard-crashes on
+    // device (the crash is inside expo-notifications' native dialog path,
+    // not the modal timing). So we NEVER call requestPermissionsAsync()
+    // anymore — instead we deep-link to iOS Settings where the user
+    // enables notifications manually. Zero native permission calls.
+    // (Revisit when there's a real push backend to test against.)
     try {
-      // Let the explainer modal's dismiss animation fully finish before the
-      // iOS system dialog appears — presenting during dismissal hard-crashes
-      // (Oct 2026, build 7). This delay is the crash fix.
-      await new Promise((r) => setTimeout(r, 700));
-      const token = await registerForPushNotificationsAsync();
-      if (token) await savePushToken(uidRef.current, token);
+      const { openSettingsAsync } = await import('expo-linking');
+      await openSettingsAsync();
     } catch {
-      // Permission denied or unavailable — the app works fine without it.
+      // Settings unavailable — nothing to do.
     }
   }, []);
 

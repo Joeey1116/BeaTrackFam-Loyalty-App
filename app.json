@@ -19,7 +19,7 @@
     },
     "icon": "./assets/icon.png",
     "ios": {
-      "buildNumber": "11",
+      "buildNumber": "12",
       "bundleIdentifier": "com.beatrackfaminc.rewards",
       "deploymentTarget": "16.4",
       "infoPlist": {
