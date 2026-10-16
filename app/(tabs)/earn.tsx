@@ -65,27 +65,51 @@ export default function Earn() {
     }
   };
 
+  /**
+   * Attested claim: the user confirms they actually completed the task.
+   * Points are NEVER granted for merely tapping a button — only when the
+   * user explicitly confirms completion. (Phase 2: API/webhook verification
+   * for purchases via Shopify webhooks, follows via platform APIs.)
+   */
+  const attestAndGrant = (
+    actionId: string,
+    points: number,
+    reason: string,
+    question: string,
+  ) => {
+    Alert.alert(
+      'Confirm',
+      question,
+      [
+        { text: 'Not yet', style: 'cancel' },
+        {
+          text: 'Yes, done',
+          onPress: () => grant(actionId, points, reason),
+        },
+      ],
+      { cancelable: true },
+    );
+  };
+
   const actions: EarnAction[] = [
     {
       id: 'purchase',
       icon: '🛍️',
       title: 'Make a purchase',
-      subtitle: 'Shop at beatrackfam.info — 25 pts per order day, claimed when you check out.',
+      subtitle: 'Shop at beatrackfam.info — 25 pts per order, added automatically after your order is paid.',
       points: 25,
       buttonLabel: 'SHOP',
       repeatable: true,
       run: async () => {
-        // In-app browser (expo-web-browser). When they close it, offer the
-        // daily order claim — one per day, tracked by date-scoped action ID.
-        // (v2: replace with automatic Shopify order webhooks.)
+        // Points are NOT granted here. They are credited by the Shopify
+        // order webhook (Supabase Edge Function) only after successful
+        // payment — see supabase/functions/shopify-order/README.
         try {
           const { openBrowserAsync } = await import('expo-web-browser');
           await openBrowserAsync('https://beatrackfam.info');
         } catch {
           await openLink('https://beatrackfam.info');
         }
-        const today = new Date().toISOString().slice(0, 10);
-        await grant(`order-${today}`, 25, 'Order placed at beatrackfam.info', 'One order claim per day — see you tomorrow.');
       },
     },
     {
@@ -108,7 +132,12 @@ export default function Earn() {
       repeatable: false,
       run: async () => {
         await openLink('https://instagram.com/beatrackfam');
-        await grant('follow-ig', 20, ONE_TIME_REASONS['follow-ig']);
+        attestAndGrant(
+          'follow-ig',
+          20,
+          ONE_TIME_REASONS['follow-ig'],
+          'Did you follow @beatrackfam on Instagram?',
+        );
       },
     },
     {
@@ -121,7 +150,12 @@ export default function Earn() {
       repeatable: false,
       run: async () => {
         await openLink('https://www.tiktok.com/@beatrackfam');
-        await grant('follow-tiktok', 20, ONE_TIME_REASONS['follow-tiktok']);
+        attestAndGrant(
+          'follow-tiktok',
+          20,
+          ONE_TIME_REASONS['follow-tiktok'],
+          'Did you follow @beatrackfam on TikTok?',
+        );
       },
     },
     {
@@ -142,7 +176,13 @@ export default function Earn() {
       points: 30,
       buttonLabel: 'CLAIM',
       repeatable: false,
-      run: async () => grant('review', 30, ONE_TIME_REASONS['review']),
+      run: async () =>
+        attestAndGrant(
+          'review',
+          30,
+          ONE_TIME_REASONS['review'],
+          'Did you leave a review on a product you bought?',
+        ),
     },
   ];
 
