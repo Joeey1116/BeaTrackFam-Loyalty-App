@@ -1,18 +1,7 @@
 import { type ReactNode } from 'react';
-import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
-
-let GlassView: any = null;
-let glassAvailable = false;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const mod = require('expo-glass-effect');
-  GlassView = mod.GlassView;
-  glassAvailable = typeof mod.isLiquidGlassAvailable === 'function'
-    ? mod.isLiquidGlassAvailable()
-    : Platform.OS === 'ios';
-} catch {
-  glassAvailable = false;
-}
+import { StyleSheet, View, type ViewStyle } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 
 interface GlassCardProps {
   children: ReactNode;
@@ -22,38 +11,37 @@ interface GlassCardProps {
 }
 
 /**
- * Liquid Glass card (iOS 26+) with graceful fallback.
- * On older iOS / Android / web it renders the standard dark card,
- * so the design never breaks anywhere.
+ * Frosted-glass card.
+ *
+ * Uses expo-blur's BlurView as the primary implementation (reliable across
+ * builds) with a sheen and edge highlight so cards read as glass. Falls
+ * back gracefully to a solid dark card if the native blur module is ever
+ * unavailable, so the design never breaks.
  */
 export function GlassCard({ children, style, variant = 'regular' }: GlassCardProps) {
-  if (glassAvailable && GlassView) {
-    return (
-      <GlassView
-        glassEffectStyle={variant}
-        tintColor="rgba(255,255,255,0.08)"
-        style={[styles.glass, style]}
-      >
-        {children}
-      </GlassView>
-    );
-  }
-  return <View style={[styles.fallback, style]}>{children}</View>;
+  const bg = variant === 'clear' ? 'rgba(20,20,22,0.35)' : 'rgba(24,24,26,0.55)';
+  return (
+    <View style={[styles.wrap, style]}>
+      <BlurView intensity={70} tint="dark" style={[StyleSheet.absoluteFill, { backgroundColor: bg }]} />
+      <LinearGradient
+        colors={['rgba(255,255,255,0.10)', 'transparent']}
+        locations={[0, 0.5]}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={styles.inner}>{children}</View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  glass: {
+  wrap: {
     borderRadius: 20,
-    padding: 18,
     marginBottom: 16,
     overflow: 'hidden',
-  },
-  fallback: {
-    backgroundColor: '#111111',
-    borderRadius: 20,
-    padding: 18,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    marginBottom: 16,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  inner: {
+    padding: 18,
   },
 });
