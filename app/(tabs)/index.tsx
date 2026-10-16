@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Screen } from '../../components/Screen';
 import { PointsCard } from '../../components/PointsCard';
 import { TierBar } from '../../components/TierBar';
@@ -45,6 +45,7 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const uidRef = useRef<string>(DEMO_USER_ID);
@@ -76,14 +77,24 @@ export default function Home() {
     if (takeEmailConfirmedPending()) setShowWelcome(true);
   }, [load]);
 
-  // First-launch push permission: we ask with our own explainer first,
-  // so the OS prompt never blindsides anyone. Shown exactly once.
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
+
+  // First-launch push permission: DISABLED (Oct 15 2026, build 8).
+  // Tapping "TURN ON NOTIFICATIONS" hard-crashes on device (native crash in
+  // the expo-notifications permission/token flow; EAS projectId is also the
+  // zero UUID so Expo push tokens can't work in this build setup, and there
+  // is no push backend yet anyway). Re-enable once push is properly
+  // configured (real EAS project, aps entitlement) and verified on device.
   useEffect(() => {
-    if (loading) return;
-    hasSeenPushPrompt().then((seen) => {
-      if (!seen) setShowPushPrompt(true);
-    });
-  }, [loading]);
+    // Intentionally empty — see above.
+  }, []);
 
   const handlePushChoice = useCallback(async (enable: boolean) => {
     setShowPushPrompt(false);
@@ -120,7 +131,11 @@ export default function Home() {
   const firstName = profile?.email?.split('@')[0] ?? 'fam';
 
   return (
-    <Screen>
+    <Screen
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#ffffff" />
+      }
+    >
       {showWelcome && (
         <TouchableOpacity
           style={styles.welcomeBanner}
