@@ -93,7 +93,7 @@ Deno.serve(async (req: Request) => {
 
   const { error } = await supabase.from('points_ledger').insert({
     user_id: profile.id,
-    points: POINTS_PER_ORDER,
+    delta: POINTS_PER_ORDER,
     reason: `Order ${order.order_number ?? orderId} paid at beatrackfam.info`,
     action_id: actionId,
   });
