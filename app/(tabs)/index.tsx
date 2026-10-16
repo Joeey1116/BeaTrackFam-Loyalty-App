@@ -86,21 +86,56 @@ export default function Home() {
     }
   }, [load]);
 
-  // First-launch push permission: DISABLED (Oct 15 2026, build 8).
-  // Tapping "TURN ON NOTIFICATIONS" hard-crashes on device (native crash in
-  // the expo-notifications permission/token flow; EAS projectId is also the
-  // zero UUID so Expo push tokens can't work in this build setup, and there
-  // is no push backend yet anyway). Re-enable once push is properly
-  // configured (real EAS project, aps entitlement) and verified on device.
+  // First-launch push permission: our own explainer first, so the OS prompt
+  // never blindsides anyone. Shown exactly once. Re-enabled Oct 15 2026
+  // (build 10) with a crash-safe flow — see handlePushChoice.
   useEffect(() => {
-    // Intentionally empty — see above.
-  }, []);
+    if (loading) return;
+    hasSeenPushPrompt().then((seen) => {
+      if (!seen) {
+        // Slight delay so this doesn't collide with the ATT prompt.
+        setTimeout(() => setShowPushPrompt(true), 4000);
+      }
+    });
+  }, [loading]);
+
+  // App Tracking Transparency: ask once on launch, after a short delay so
+  // the prompt doesn't fire mid-render or collide with the push explainer.
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { default: AsyncStorage } = await import(
+          '@react-native-async-storage/async-storage'
+        );
+        const seen = await AsyncStorage.getItem('@beatrackfam.attPromptSeen');
+        if (seen || cancelled) return;
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled) return;
+        const { requestTrackingPermissionsAsync } = await import(
+          'expo-tracking-transparency'
+        );
+        await requestTrackingPermissionsAsync();
+        await AsyncStorage.setItem('@beatrackfam.attPromptSeen', '1');
+      } catch {
+        // Tracking stays off — the app works fine without it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading]);
 
   const handlePushChoice = useCallback(async (enable: boolean) => {
     setShowPushPrompt(false);
     await markPushPromptSeen();
     if (!enable) return;
     try {
+      // Let the explainer modal's dismiss animation fully finish before the
+      // iOS system dialog appears — presenting during dismissal hard-crashes
+      // (Oct 2026, build 7). This delay is the crash fix.
+      await new Promise((r) => setTimeout(r, 700));
       const token = await registerForPushNotificationsAsync();
       if (token) await savePushToken(uidRef.current, token);
     } catch {

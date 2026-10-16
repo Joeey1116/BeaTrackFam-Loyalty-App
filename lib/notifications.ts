@@ -49,7 +49,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   try {
     const Notifications = await import('expo-notifications');
     const Device = await import('expo-device');
-    const Constants = await import('expo-constants');
 
     if (!Device.isDevice) return null;
 
@@ -57,18 +56,18 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
-    if (existingStatus !== 'granted') {
+    // Only ever show the native dialog when the user hasn't decided yet.
+    // Re-prompting after a denial is both annoying and a native crash risk.
+    if (existingStatus === 'undetermined') {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
     if (finalStatus !== 'granted') return null;
 
-    const projectId =
-      Constants.default?.expoConfig?.extra?.eas?.projectId ??
-      Constants.default?.easConfig?.projectId;
-    const token = projectId
-      ? (await Notifications.getExpoPushTokenAsync({ projectId })).data
-      : (await Notifications.getDevicePushTokenAsync()).data;
+    // NOTE (Oct 2026): no EAS project exists (projectId is the zero UUID),
+    // so Expo push tokens can never work in this build setup. Use the raw
+    // APNs/FCM device token instead — a future push backend can use it.
+    const token = (await Notifications.getDevicePushTokenAsync()).data;
 
     pushToken = token ?? null;
     return pushToken;
