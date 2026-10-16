@@ -141,8 +141,8 @@ export default function Home() {
     // enables notifications manually. Zero native permission calls.
     // (Revisit when there's a real push backend to test against.)
     try {
-      const { openSettingsAsync } = await import('expo-linking');
-      await openSettingsAsync();
+      const Linking = await import('expo-linking');
+      await Linking.openSettings();
     } catch {
       // Settings unavailable — nothing to do.
     }
