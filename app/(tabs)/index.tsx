@@ -134,17 +134,15 @@ export default function Home() {
     setShowPushPrompt(false);
     await markPushPromptSeen();
     if (!enable) return;
-    // Build 10's in-app native permission request still hard-crashes on
-    // device (the crash is inside expo-notifications' native dialog path,
-    // not the modal timing). So we NEVER call requestPermissionsAsync()
-    // anymore — instead we deep-link to iOS Settings where the user
-    // enables notifications manually. Zero native permission calls.
-    // (Revisit when there's a real push backend to test against.)
+    // The Oct 2026 crash was the NativeTabs bar, not the notification
+    // dialog — so we use the real iOS permission prompt. This registers
+    // the app for notifications, which makes the Notifications toggle
+    // appear in iOS Settings.
     try {
-      const Linking = await import('expo-linking');
-      await Linking.openSettings();
+      const Notifications = await import('expo-notifications');
+      await Notifications.requestPermissionsAsync();
     } catch {
-      // Settings unavailable — nothing to do.
+      // Permission request unavailable — nothing to do.
     }
   }, []);
 
