@@ -24,38 +24,28 @@ export default function AuthGate() {
         router.replace('/reset-password');
         return;
       }
-      // A signup-confirmation deep link launched the app — the layout is
-      // exchanging the confirmation code for a session right now. Wait for
-      // it (bounded) instead of bouncing a signed-in user to onboarding.
-      if (isEmailConfirmedPending()) {
-        for (let i = 0; i < 10; i++) {
-          let id: string | null = null;
-          try {
-            id = await getSessionUserId();
-          } catch {
-            id = null;
-          }
-          if (id || cancelled) break;
-          await new Promise((resolve) => setTimeout(resolve, 400));
-        }
-        if (cancelled) return;
-        // The exchange never produced a session (expired/invalid link) —
-        // drop the stale flag so a later normal sign-in doesn't show it.
-        let confirmedId: string | null = null;
-        try {
-          confirmedId = await getSessionUserId();
-        } catch {
-          confirmedId = null;
-        }
-        if (!confirmedId) takeEmailConfirmedPending();
-      }
+      // Wait (bounded) for a session to materialize before deciding. Two
+      // things can still be in flight at cold start: the stored session
+      // being restored/refreshed from AsyncStorage, and — when a
+      // signup-confirmation deep link launched the app — the layout
+      // exchanging the confirmation code for a session. Deciding on a
+      // single instant read bounced signed-in users to onboarding, where
+      // they stayed (nothing re-checked) until a force-close.
       let userId: string | null = null;
-      try {
-        userId = await getSessionUserId();
-      } catch {
-        userId = null;
+      for (let i = 0; i < 8; i++) {
+        try {
+          userId = await getSessionUserId();
+        } catch {
+          userId = null;
+        }
+        if (userId || cancelled) break;
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
       if (cancelled) return;
+      // A confirmation was pending but no session ever arrived (expired or
+      // invalid link) — drop the stale flag so a later normal sign-in
+      // doesn't show the welcome message.
+      if (!userId && isEmailConfirmedPending()) takeEmailConfirmedPending();
       router.replace(userId ? '/(tabs)' : '/onboarding');
     };
     go();

@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { useEffect, useRef } from 'react';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Alert, Platform } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import {
   addNotificationTapListener,
@@ -12,7 +12,7 @@ import {
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { markPasswordResetPending } from '../lib/passwordReset';
 import { markEmailConfirmedPending } from '../lib/emailConfirmed';
-import { ensureProfile } from '../lib/loyalty';
+import { applyPendingReferral, ensureProfile } from '../lib/loyalty';
 
 // Global JS error handler: in release builds a fatal error would otherwise
 // kill the app silently. Showing the message lets us diagnose from a
@@ -136,6 +136,13 @@ async function handleConfirmedUrl(url: string, router: ReturnType<typeof useRout
       } catch {
         // Non-fatal: the home tab shows a signed-in state regardless.
       }
+      // A referral code typed at sign-up was stashed (no session existed
+      // then) — now that the confirmation created one, apply it.
+      try {
+        await applyPendingReferral(userId);
+      } catch {
+        // Non-fatal: the stash survives for the next sign-in if this failed.
+      }
     }
   } catch {
     // No session established — the tabs still load; the welcome message is skipped.
@@ -149,6 +156,64 @@ async function handleConfirmedUrl(url: string, router: ReturnType<typeof useRout
 
 export default function RootLayout() {
   const router = useRouter();
+  const segments = useSegments();
+  const segmentsRef = useRef<string[]>(segments as string[]);
+  segmentsRef.current = segments as string[];
+
+  // Session upkeep + auth-state navigation. Two React Native gaps live here:
+  //
+  // 1. Auto-refresh: supabase-js refreshes tokens on a JS timer that iOS
+  //    suspends while the app is backgrounded. Supabase's React Native guide
+  //    requires driving start/stopAutoRefresh from AppState — without it the
+  //    stored session silently goes stale between restarts and the user
+  //    lands back on onboarding ("doesn't keep me logged in").
+  // 2. Auth changes: nothing else in the app listened for them, so a session
+  //    created by the email-confirmation deep link (or any sign-in) after
+  //    screens had mounted never became visible until the app was
+  //    force-closed and everything remounted. On SIGNED_IN outside the tabs,
+  //    route into the app; on SIGNED_OUT inside the tabs, route out.
+  //    Password recovery also creates a session — never hijack that screen.
+  useEffect(() => {
+    if (!isSupabaseConfigured() || !supabase) return;
+
+    if (AppState.currentState === 'active') {
+      supabase.auth.startAutoRefresh();
+    }
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (!supabase) return;
+      if (state === 'active') {
+        supabase.auth.startAutoRefresh();
+      } else {
+        supabase.auth.stopAutoRefresh();
+      }
+    });
+
+    const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
+      const top = segmentsRef.current[0];
+      const inTabs = top === '(tabs)';
+      if (event === 'SIGNED_IN' && session) {
+        if (top === 'reset-password') return;
+        if (!inTabs) {
+          try {
+            router.replace('/(tabs)');
+          } catch {
+            // Router not ready yet — the auth gate routes on the session.
+          }
+        }
+      } else if (event === 'SIGNED_OUT' && inTabs) {
+        try {
+          router.replace('/onboarding');
+        } catch {
+          // Router not ready yet.
+        }
+      }
+    });
+
+    return () => {
+      appStateSub.remove();
+      authSub.subscription.unsubscribe();
+    };
+  }, [router]);
 
   useEffect(() => {
     setupForegroundPresentation();
