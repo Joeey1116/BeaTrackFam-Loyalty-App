@@ -27,6 +27,7 @@ export default function ProfileScreen() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [birthday, setBirthday] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
   const configured = isSupabaseConfigured();
 
@@ -79,6 +80,52 @@ export default function ProfileScreen() {
       await supabase.auth.signOut().catch(() => {});
     }
     router.replace('/onboarding');
+  };
+
+  const deleteAccount = () => {
+    Alert.alert(
+      'Delete your account?',
+      'This permanently deletes your BeaTrackFam Rewards account. Your points, redeemed rewards, and history are gone forever and cannot be restored or transferred.',
+      [
+        { text: 'Keep my account', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you absolutely sure?',
+              'There is no undo. Tap "Yes, delete my account" to permanently delete it now.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Yes, delete my account', style: 'destructive', onPress: confirmDeleteAccount },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  };
+
+  const confirmDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      if (configured && supabase) {
+        // The Edge Function deletes the caller's auth user; the schema's
+        // cascades wipe their profile, points ledger, and redemptions.
+        const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
+        if (error) throw error;
+      }
+      // Account is gone server-side — clear the local session (AsyncStorage)
+      // and head back to the start.
+      await signOut();
+    } catch {
+      Alert.alert(
+        'Could not delete your account',
+        'Something went wrong and nothing was deleted. Check your connection and try again — or email us at contact@beatrackfam.info and we will take care of it.',
+      );
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const [trackingStatus, setTrackingStatus] = useState<string | null>(null);
@@ -226,6 +273,22 @@ export default function ProfileScreen() {
       <TouchableOpacity style={styles.signOut} onPress={signOut} activeOpacity={0.8}>
         <Text style={styles.signOutText}>SIGN OUT</Text>
       </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.deleteAccount, deleting && styles.deleteAccountDisabled]}
+        onPress={deleteAccount}
+        disabled={deleting}
+        activeOpacity={0.8}
+      >
+        {deleting ? (
+          <ActivityIndicator color="#ff6666" />
+        ) : (
+          <Text style={styles.deleteAccountText}>DELETE ACCOUNT</Text>
+        )}
+      </TouchableOpacity>
+      <Text style={styles.deleteHint}>
+        Permanently deletes your account, points, and rewards. This cannot be undone.
+      </Text>
     </Screen>
   );
 }
@@ -320,4 +383,16 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   signOutText: { color: '#ff9999', fontSize: 15, fontWeight: '800', letterSpacing: 2 },
+  deleteAccount: {
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#7a1f1f',
+    backgroundColor: '#1c0505',
+    marginTop: 28,
+  },
+  deleteAccountDisabled: { opacity: 0.5 },
+  deleteAccountText: { color: '#ff5555', fontSize: 15, fontWeight: '800', letterSpacing: 2 },
+  deleteHint: { color: '#666666', fontSize: 12, textAlign: 'center', marginTop: 10, lineHeight: 17 },
 });
