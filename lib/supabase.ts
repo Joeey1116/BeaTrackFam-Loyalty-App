@@ -18,6 +18,19 @@ if (url && anonKey) {
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,
+        // PKCE, explicitly. @supabase/auth-js DEFAULTS TO 'implicit' —
+        // builds 16/17 assumed PKCE was the v2 default and never opted in,
+        // so signup-confirmation emails delivered the session as URL
+        // fragment tokens (#access_token=...), which never survived the
+        // Gmail -> browser -> "Open in app?" handoff into the app: the
+        // deep-link handler ended up with no usable credentials, no
+        // session was ever created, and nothing was persisted (the
+        // "doesn't stay logged in" bug). With PKCE, signUp/resend/
+        // resetPasswordForEmail store a code verifier in AsyncStorage
+        // and the email links come back with ?code= in the query string,
+        // which the handlers exchange via exchangeCodeForSession — the
+        // documented Expo/React Native pattern.
+        flowType: 'pkce',
       },
     });
   } catch {
