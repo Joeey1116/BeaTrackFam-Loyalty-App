@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Screen } from '../../components/Screen';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
@@ -10,6 +10,7 @@ import {
   DEMO_USER_ID,
   getLedger,
   getProfile,
+  getSessionUserEmail,
   getSessionUserId,
   tierFor,
   type LedgerEntry,
@@ -24,6 +25,7 @@ function formatDate(iso: string): string {
 export default function ProfileScreen() {
   const [uid, setUid] = useState<string>(DEMO_USER_ID);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [birthday, setBirthday] = useState('');
   const [saving, setSaving] = useState(false);
@@ -40,14 +42,26 @@ export default function ProfileScreen() {
       setProfile(p);
       setLedger(l);
       if (p?.birthday) setBirthday(p.birthday);
+      // EMAIL display fallback: if the profile row is missing or its email
+      // is empty, show the signed-in auth user's email — never "—" for a
+      // signed-in user.
+      if (p?.email) {
+        setSessionEmail(null);
+      } else {
+        setSessionEmail(await getSessionUserEmail().catch(() => null));
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  // Refetch on every focus — tab screens stay mounted, so a mount-only
+  // fetch goes stale the moment the session changes.
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
 
   const saveBirthday = async () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(birthday.trim())) {
@@ -194,7 +208,7 @@ export default function ProfileScreen() {
 
       <View style={styles.card}>
         <Text style={styles.cardLabel}>EMAIL</Text>
-        <Text style={styles.cardValue}>{profile?.email ?? '—'}</Text>
+        <Text style={styles.cardValue}>{profile?.email || sessionEmail || '—'}</Text>
         <Text style={styles.cardLabel}>TIER</Text>
         <Text style={styles.tierBadge}>{tier.name.toUpperCase()}</Text>
         <Text style={styles.cardLabel}>POINTS</Text>
