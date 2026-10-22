@@ -19,3 +19,19 @@ export function takeEmailConfirmedPending(): boolean {
   confirmedPending = false;
   return value;
 }
+
+/* A confirmation link was opened but did NOT establish a session (bad or
+ * already-used code, dropped credentials). The account itself is usually
+ * confirmed server-side by then, so the gate sends the user to sign in
+ * instead of onboarding. */
+let confirmationFailed = false;
+
+export function markEmailConfirmationFailed() {
+  confirmationFailed = true;
+}
+
+export function takeEmailConfirmationFailed(): boolean {
+  const value = confirmationFailed;
+  confirmationFailed = false;
+  return value;
+}

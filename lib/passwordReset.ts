@@ -10,6 +10,12 @@ export function markPasswordResetPending() {
   resetPending = true;
 }
 
+/** Peek without consuming — the auth provider checks this before it
+ *  routes a fresh (recovery) session into the tabs. */
+export function isPasswordResetPending(): boolean {
+  return resetPending;
+}
+
 export function takePasswordResetPending(): boolean {
   const value = resetPending;
   resetPending = false;
