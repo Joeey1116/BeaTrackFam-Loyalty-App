@@ -173,6 +173,10 @@ export default function ProfileScreen() {
   }
 
   const tier = tierFor(profile?.points ?? 0);
+  // uid falls back to DEMO_USER_ID whenever there is no Supabase session
+  // (signed out, or Supabase unconfigured). Delete Account is an
+  // account-holder action, so it renders only for a real signed-in user.
+  const isSignedIn = uid !== DEMO_USER_ID;
 
   return (
     <Screen>
@@ -274,21 +278,25 @@ export default function ProfileScreen() {
         <Text style={styles.signOutText}>SIGN OUT</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[styles.deleteAccount, deleting && styles.deleteAccountDisabled]}
-        onPress={deleteAccount}
-        disabled={deleting}
-        activeOpacity={0.8}
-      >
-        {deleting ? (
-          <ActivityIndicator color="#ff6666" />
-        ) : (
-          <Text style={styles.deleteAccountText}>DELETE ACCOUNT</Text>
-        )}
-      </TouchableOpacity>
-      <Text style={styles.deleteHint}>
-        Permanently deletes your account, points, and rewards. This cannot be undone.
-      </Text>
+      {isSignedIn && (
+        <>
+          <TouchableOpacity
+            style={[styles.deleteAccount, deleting && styles.deleteAccountDisabled]}
+            onPress={deleteAccount}
+            disabled={deleting}
+            activeOpacity={0.8}
+          >
+            {deleting ? (
+              <ActivityIndicator color="#ff6666" />
+            ) : (
+              <Text style={styles.deleteAccountText}>DELETE ACCOUNT</Text>
+            )}
+          </TouchableOpacity>
+          <Text style={styles.deleteHint}>
+            Permanently deletes your account, points, and rewards. This cannot be undone.
+          </Text>
+        </>
+      )}
     </Screen>
   );
 }
