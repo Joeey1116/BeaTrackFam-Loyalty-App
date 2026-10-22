@@ -13,7 +13,12 @@
  *   3. A real code is produced by one of three routes, in order:
  *      a. LIVE (preferred): created in Shopify via the Admin API
  *         (unique price rule + discount code, usage limit 1) when
- *         SHOPIFY_SHOP_DOMAIN + SHOPIFY_ADMIN_ACCESS_TOKEN are set.
+ *         SHOPIFY_SHOP_DOMAIN is set together with app credentials —
+ *         either SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET (Dev
+ *         Dashboard app: a short-lived Admin API token is fetched via
+ *         the client-credentials grant at redemption time) or a legacy
+ *         static SHOPIFY_ADMIN_ACCESS_TOKEN. If the token exchange
+ *         fails, the redemption falls through to the pool route.
  *      b. POOL: a pre-created Shopify code drawn atomically from
  *         public.code_pool (see migration_redemptions_v2.sql).
  *      c. MANUAL: an internal claim code (used for the Free Tee when no
@@ -34,11 +39,17 @@
  * 2. Deploy this function: Edge Functions → deploy `redeem-reward`
  *    (or `supabase functions deploy redeem-reward`).
  * 3. Optional but recommended — live Shopify codes:
- *    Shopify admin → Settings → Apps and sales channels → Develop apps →
- *    Create an app (e.g. "BeaTrackFam Rewards"), Admin API scopes:
- *    write_discounts + read_discounts (+ read_products), Install app,
- *    copy the Admin API access token. Then set Edge Function secrets:
+ *    Create an app in the Shopify Dev Dashboard (dev.shopify.com) —
+ *    this store no longer offers the legacy in-admin custom-app
+ *    creator — with Admin API scopes: write_discounts + read_discounts
+ *    (+ read_products), install it on the store, and copy the app's
+ *    Client ID + Client secret. Then set Edge Function secrets:
  *      SHOPIFY_SHOP_DOMAIN=your-store.myshopify.com
+ *      SHOPIFY_CLIENT_ID=<the app's Client ID>
+ *      SHOPIFY_CLIENT_SECRET=<the app's Client secret>
+ *    The function exchanges those credentials for a short-lived Admin
+ *    API token at redemption time (client-credentials grant). A legacy
+ *    static token still works instead, if one is ever available:
  *      SHOPIFY_ADMIN_ACCESS_TOKEN=<the token>
  *    Until then redemptions draw from code_pool (stock it with codes you
  *    create by hand in Shopify) or fall back to manual claim codes.
@@ -171,6 +182,51 @@ async function shopifyDeleteRule(shop: string, token: string, ruleId: number): P
     `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/price_rules/${ruleId}.json`,
     { method: 'DELETE', headers: { 'X-Shopify-Access-Token': token } },
   ).catch(() => {});
+}
+
+/**
+ * Resolve the Admin API access token for the live Shopify route.
+ * Preference order:
+ *   1. Client credentials — SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET.
+ *      Dev Dashboard apps issue no permanent token, so exchange the
+ *      credentials for a short-lived (~24h) token at redemption time
+ *      via the client-credentials grant.
+ *   2. Legacy static SHOPIFY_ADMIN_ACCESS_TOKEN, used as-is.
+ * Returns null when nothing is configured or the exchange fails — the
+ * caller then falls through to the pool/manual routes, and no Shopify
+ * code has been created yet, so nothing can be orphaned.
+ */
+async function resolveShopifyToken(shop: string): Promise<string | null> {
+  const clientId = Deno.env.get('SHOPIFY_CLIENT_ID');
+  const clientSecret = Deno.env.get('SHOPIFY_CLIENT_SECRET');
+  if (clientId && clientSecret) {
+    try {
+      const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+        }).toString(),
+      });
+      if (!res.ok) {
+        console.error(`Shopify token exchange failed (${res.status})`);
+        return null;
+      }
+      const data = await res.json();
+      const token = data?.access_token as string | undefined;
+      if (!token) {
+        console.error('Shopify token exchange returned no access_token');
+        return null;
+      }
+      return token;
+    } catch (e) {
+      console.error('Shopify token exchange error:', (e as Error).message);
+      return null;
+    }
+  }
+  return Deno.env.get('SHOPIFY_ADMIN_ACCESS_TOKEN') ?? null;
 }
 
 async function sendCodeEmail(
@@ -335,10 +391,13 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // Pick the delivery route.
+  // Pick the delivery route. The Shopify token is resolved per request:
+  // client credentials are exchanged for a short-lived token; a failed
+  // exchange leaves shopToken null and the redemption falls through to
+  // the pool/manual routes below.
   const shop = Deno.env.get('SHOPIFY_SHOP_DOMAIN');
-  const shopToken = Deno.env.get('SHOPIFY_ADMIN_ACCESS_TOKEN');
   const freeProductId = Deno.env.get('SHOPIFY_FREE_PRODUCT_ID');
+  const shopToken = shop ? await resolveShopifyToken(shop) : null;
   const mappable = reward.discount_kind === 'percent'
     || reward.discount_kind === 'shipping'
     || reward.discount_kind === 'amount'
