@@ -142,30 +142,10 @@ function makeCode(prefix: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Session helper                                                      */
-/* ------------------------------------------------------------------ */
-
-export async function getSessionUserId(): Promise<string | null> {
-  if (!isSupabaseConfigured() || !supabase) return null;
-  try {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.user.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** Email of the signed-in auth user, straight from the session (display fallback). */
-export async function getSessionUserEmail(): Promise<string | null> {
-  if (!isSupabaseConfigured() || !supabase) return null;
-  try {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.user.email ?? null;
-  } catch {
-    return null;
-  }
-}
-
+/* Session state lives in lib/auth.tsx (AuthProvider / useAuth).       */
+/* Screens must consume the shared auth state — per-screen             */
+/* getSession() helpers were removed in build 18: they let every tab   */
+/* resolve (and freeze) its own view of the session independently.     */
 /* ------------------------------------------------------------------ */
 /* Profiles                                                            */
 /* ------------------------------------------------------------------ */

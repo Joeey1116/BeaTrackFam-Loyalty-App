@@ -1,47 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { Screen } from '../components/Screen';
 import { Logo } from '../components/Logo';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
 
 type Status = 'checking' | 'ready' | 'invalid';
 
 export default function ResetPassword() {
-  const [status, setStatus] = useState<Status>('checking');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const configured = isSupabaseConfigured();
-
-  useEffect(() => {
-    let cancelled = false;
-    const check = async () => {
-      // The root layout may still be exchanging the recovery code — poll briefly.
-      for (let i = 0; i < 12 && !cancelled; i++) {
-        try {
-          const { data } = await supabase!.auth.getSession();
-          if (data.session) {
-            setStatus('ready');
-            return;
-          }
-        } catch {
-          // Keep polling; a transient failure shouldn't fail the link.
-        }
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-      if (!cancelled) setStatus('invalid');
-    };
-    if (configured) {
-      check();
-    } else {
-      setStatus('invalid');
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [configured]);
+  // The recovery session is established by AuthProvider (it processes
+  // the reset deep link before resolving auth status), so this screen
+  // just reads the shared state — no getSession() polling. 'checking'
+  // while the provider restores, 'ready' with a session, 'invalid'
+  // once auth has resolved with no session.
+  const { status: authStatus, session } = useAuth();
+  const status: Status = !configured
+    ? 'invalid'
+    : session
+      ? 'ready'
+      : authStatus === 'loading'
+        ? 'checking'
+        : 'invalid';
 
   const handleSave = async () => {
     setMessage('');

@@ -9,11 +9,11 @@ import {
   DEMO_USER_ID,
   getLedger,
   getProfile,
-  getSessionUserId,
   tierFor,
   type LedgerEntry,
   type Profile,
 } from '../../lib/loyalty';
+import { useAuth } from '../../lib/auth';
 // NOTE: lib/notifications intentionally NOT imported here. Its
 // requestPermissionsAsync() path hard-crashes on device (Oct 2026);
 // the push prompt now deep-links to iOS Settings instead.
@@ -51,13 +51,15 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
-  const uidRef = useRef<string>(DEMO_USER_ID);
+  // Session state comes from AuthProvider — never resolved per-screen.
+  const { userId } = useAuth();
+  const authUid = userId ?? DEMO_USER_ID;
+  const uidRef = useRef<string>(authUid);
+  uidRef.current = authUid;
 
   const load = useCallback(async () => {
     try {
-      const sessionId = await getSessionUserId();
-      const uid = sessionId ?? DEMO_USER_ID;
-      uidRef.current = uid;
+      const uid = uidRef.current;
       const [p, l] = await Promise.all([getProfile(uid), getLedger(uid)]);
       setProfile(p);
       setLedger(l.slice(0, 5));
@@ -76,9 +78,29 @@ export default function Home() {
 
   useEffect(() => {
     load();
-    // One-time welcome after confirming the email via the deep link.
-    if (takeEmailConfirmedPending()) setShowWelcome(true);
   }, [load]);
+
+  // Reload when the signed-in identity changes under an already-mounted
+  // Home (e.g. a confirmation deep link signs the user in while they were
+  // browsing in demo mode) — tab screens stay mounted, so without this
+  // the demo profile would stick.
+  const seenUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (seenUidRef.current === null) {
+      seenUidRef.current = authUid;
+      return;
+    }
+    if (seenUidRef.current !== authUid) {
+      seenUidRef.current = authUid;
+      load();
+    }
+  }, [authUid, load]);
+
+  // One-time welcome after confirming the email via the deep link. The
+  // flag is only set once a session actually exists (see lib/auth).
+  useEffect(() => {
+    if (userId && takeEmailConfirmedPending()) setShowWelcome(true);
+  }, [userId]);
 
   // Refetch whenever Home regains focus (the mount load above covers the
   // first focus). Tab screens stay mounted, so without this a session that

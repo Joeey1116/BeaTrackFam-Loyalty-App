@@ -1,10 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Screen } from '../../components/Screen';
 import { ActionRow } from '../../components/ActionRow';
-import { awardPoints, DEMO_USER_ID, getProfile, getSessionUserId, ONE_TIME_REASONS } from '../../lib/loyalty';
+import { awardPoints, DEMO_USER_ID, getProfile, ONE_TIME_REASONS } from '../../lib/loyalty';
+import { useAuth } from '../../lib/auth';
 
 interface EarnAction {
   id: string;
@@ -18,20 +19,24 @@ interface EarnAction {
 }
 
 export default function Earn() {
-  const [uid, setUid] = useState<string>(DEMO_USER_ID);
   const [claimed, setClaimed] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  // Session state comes from AuthProvider — never resolved per-screen.
+  const { userId } = useAuth();
+  const uid = userId ?? DEMO_USER_ID;
 
   const refresh = useCallback(async () => {
-    const sessionId = await getSessionUserId().catch(() => null);
-    const id = sessionId ?? DEMO_USER_ID;
-    setUid(id);
-    const profile = await getProfile(id).catch(() => null);
+    const profile = await getProfile(uid).catch(() => null);
     setClaimed(profile?.claimedActions ?? []);
-  }, []);
+  }, [uid]);
 
-  // Refetch on every focus — tab screens stay mounted, so a mount-only
-  // fetch goes stale the moment the session changes.
+  // Load on mount, again whenever the signed-in identity changes, and on
+  // every focus — tab screens stay mounted, so a mount-only fetch goes
+  // stale the moment the session changes.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   useFocusEffect(
     useCallback(() => {
       refresh();

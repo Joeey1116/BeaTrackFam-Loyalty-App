@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -8,26 +8,25 @@ import {
   DEMO_USER_ID,
   getProfile,
   getRewards,
-  getSessionUserId,
   redeemReward,
   type Reward,
 } from '../../lib/loyalty';
+import { useAuth } from '../../lib/auth';
 
 export default function Rewards() {
-  const [uid, setUid] = useState<string>(DEMO_USER_ID);
   const [points, setPoints] = useState(0);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [loading, setLoading] = useState(true);
   const [redeeming, setRedeeming] = useState<Reward | null>(null);
   const [code, setCode] = useState<string | null>(null);
+  // Session state comes from AuthProvider — never resolved per-screen.
+  const { userId } = useAuth();
+  const uid = userId ?? DEMO_USER_ID;
 
   const refresh = useCallback(async () => {
     try {
-      const sessionId = await getSessionUserId().catch(() => null);
-      const id = sessionId ?? DEMO_USER_ID;
-      setUid(id);
       const [profile, list] = await Promise.all([
-        getProfile(id).catch(() => null),
+        getProfile(uid).catch(() => null),
         getRewards().catch(() => []),
       ]);
       setPoints(profile?.points ?? 0);
@@ -35,10 +34,15 @@ export default function Rewards() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [uid]);
 
-  // Refetch on every focus — tab screens stay mounted, so a mount-only
-  // fetch goes stale the moment the session changes.
+  // Load on mount, again whenever the signed-in identity changes, and on
+  // every focus — tab screens stay mounted, so a mount-only fetch goes
+  // stale the moment the session changes.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   useFocusEffect(
     useCallback(() => {
       refresh();

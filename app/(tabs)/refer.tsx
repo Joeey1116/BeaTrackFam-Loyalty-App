@@ -1,27 +1,33 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Screen } from '../../components/Screen';
-import { DEMO_USER_ID, getProfile, getSessionUserId, type Profile } from '../../lib/loyalty';
+import { DEMO_USER_ID, getProfile, type Profile } from '../../lib/loyalty';
+import { useAuth } from '../../lib/auth';
 
 export default function Refer() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  // Session state comes from AuthProvider — never resolved per-screen.
+  const { userId } = useAuth();
+  const uid = userId ?? DEMO_USER_ID;
 
   const refresh = useCallback(async () => {
     try {
-      const sessionId = await getSessionUserId().catch(() => null);
-      const id = sessionId ?? DEMO_USER_ID;
-      setProfile(await getProfile(id).catch(() => null));
+      setProfile(await getProfile(uid).catch(() => null));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [uid]);
 
-  // Refetch on every focus, not just first mount: tab screens stay mounted,
-  // so a mount-only fetch froze whatever the session looked like at that
-  // instant (e.g. the demo profile before a confirmation sign-in landed).
+  // Load on mount, again whenever the signed-in identity changes, and on
+  // every focus — tab screens stay mounted, so a mount-only fetch froze
+  // whatever profile the identity pointed at when the screen first ran.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   useFocusEffect(
     useCallback(() => {
       refresh();

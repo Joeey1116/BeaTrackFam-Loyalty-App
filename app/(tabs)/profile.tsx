@@ -10,12 +10,11 @@ import {
   DEMO_USER_ID,
   getLedger,
   getProfile,
-  getSessionUserEmail,
-  getSessionUserId,
   tierFor,
   type LedgerEntry,
   type Profile,
 } from '../../lib/loyalty';
+import { useAuth } from '../../lib/auth';
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -23,40 +22,42 @@ function formatDate(iso: string): string {
 }
 
 export default function ProfileScreen() {
-  const [uid, setUid] = useState<string>(DEMO_USER_ID);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [birthday, setBirthday] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
   const configured = isSupabaseConfigured();
+  // Session state comes from AuthProvider — never resolved per-screen.
+  // The auth user's email doubles as the display fallback when the
+  // profile row is missing or its email is empty (see the EMAIL row:
+  // profile?.email || sessionEmail || '—'), so a signed-in user never
+  // sees "—".
+  const { userId, email: sessionEmail } = useAuth();
+  const uid = userId ?? DEMO_USER_ID;
 
   const refresh = useCallback(async () => {
     try {
-      const sessionId = await getSessionUserId().catch(() => null);
-      const id = sessionId ?? DEMO_USER_ID;
-      setUid(id);
-      const [p, l] = await Promise.all([getProfile(id).catch(() => null), getLedger(id).catch(() => [])]);
+      const [p, l] = await Promise.all([
+        getProfile(uid).catch(() => null),
+        getLedger(uid).catch(() => []),
+      ]);
       setProfile(p);
       setLedger(l);
       if (p?.birthday) setBirthday(p.birthday);
-      // EMAIL display fallback: if the profile row is missing or its email
-      // is empty, show the signed-in auth user's email — never "—" for a
-      // signed-in user.
-      if (p?.email) {
-        setSessionEmail(null);
-      } else {
-        setSessionEmail(await getSessionUserEmail().catch(() => null));
-      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [uid]);
 
-  // Refetch on every focus — tab screens stay mounted, so a mount-only
-  // fetch goes stale the moment the session changes.
+  // Load on mount, again whenever the signed-in identity changes, and on
+  // every focus — tab screens stay mounted, so a mount-only fetch goes
+  // stale the moment the session changes.
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
   useFocusEffect(
     useCallback(() => {
       refresh();

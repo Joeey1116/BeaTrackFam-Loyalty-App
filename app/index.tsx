@@ -1,58 +1,50 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Logo } from '../components/Logo';
-import { getSessionUserId } from '../lib/loyalty';
+import { useAuth } from '../lib/auth';
 import { takePasswordResetPending } from '../lib/passwordReset';
-import { isEmailConfirmedPending, takeEmailConfirmedPending } from '../lib/emailConfirmed';
+import { takeEmailConfirmationFailed } from '../lib/emailConfirmed';
 
 /**
- * Auth gate: brief branded splash, then route to the tabs for signed-in
- * users or onboarding for everyone else. Never crashes when Supabase is
- * unconfigured — it just sends you to onboarding (demo mode).
+ * Auth gate: branded splash while AuthProvider restores the session,
+ * then route on the resolved state — signed-in users to the tabs,
+ * everyone else to onboarding. The gate no longer polls getSession():
+ * the provider's restore already includes any cold-start deep-link
+ * exchange, so when status resolves, the answer is final. Sign back in
+ * via the provider's transitions if a session appears later.
  */
 export default function AuthGate() {
+  const { status } = useAuth();
+  const [minSplashDone, setMinSplashDone] = useState(false);
+
+  // Let the branding breathe for a moment.
   useEffect(() => {
-    let cancelled = false;
-    const go = async () => {
-      // Let the branding breathe for a moment.
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      if (cancelled) return;
-      // A password-reset deep link launched the app — the recovery session
-      // must land on the reset screen, not bounce into the tabs.
-      if (takePasswordResetPending()) {
-        router.replace('/reset-password');
-        return;
-      }
-      // Wait (bounded) for a session to materialize before deciding. Two
-      // things can still be in flight at cold start: the stored session
-      // being restored/refreshed from AsyncStorage, and — when a
-      // signup-confirmation deep link launched the app — the layout
-      // exchanging the confirmation code for a session. Deciding on a
-      // single instant read bounced signed-in users to onboarding, where
-      // they stayed (nothing re-checked) until a force-close.
-      let userId: string | null = null;
-      for (let i = 0; i < 8; i++) {
-        try {
-          userId = await getSessionUserId();
-        } catch {
-          userId = null;
-        }
-        if (userId || cancelled) break;
-        await new Promise((resolve) => setTimeout(resolve, 400));
-      }
-      if (cancelled) return;
-      // A confirmation was pending but no session ever arrived (expired or
-      // invalid link) — drop the stale flag so a later normal sign-in
-      // doesn't show the welcome message.
-      if (!userId && isEmailConfirmedPending()) takeEmailConfirmedPending();
-      router.replace(userId ? '/(tabs)' : '/onboarding');
-    };
-    go();
-    return () => {
-      cancelled = true;
-    };
+    const t = setTimeout(() => setMinSplashDone(true), 1200);
+    return () => clearTimeout(t);
   }, []);
+
+  useEffect(() => {
+    if (status === 'loading' || !minSplashDone) return;
+    // A password-reset deep link launched the app — the recovery session
+    // must land on the reset screen, not bounce into the tabs.
+    if (takePasswordResetPending()) {
+      router.replace('/reset-password');
+      return;
+    }
+    if (status === 'signedIn') {
+      router.replace('/(tabs)');
+      return;
+    }
+    // A confirmation link was opened but established no session (used or
+    // broken link). The account is usually confirmed server-side, so
+    // sign-in is the useful next step — not onboarding.
+    if (takeEmailConfirmationFailed()) {
+      router.replace('/sign-in');
+      return;
+    }
+    router.replace('/onboarding');
+  }, [status, minSplashDone]);
 
   return (
     <View style={styles.wrap}>
