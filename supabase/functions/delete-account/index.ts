@@ -15,6 +15,9 @@
  * can point at the caller, and that foreign key has NO ACTION, which
  * would block the delete.
  *
+ * Build 19: the caller's stored avatar (avatars/<user-id>/ in Supabase
+ * Storage) is removed too — the DB cascade can't reach Storage objects.
+ *
  * SETUP (Joey, in the Supabase dashboard):
  * 1. Supabase Dashboard → Edge Functions → deploy this function
  *    (or `supabase functions deploy delete-account`).
@@ -68,6 +71,23 @@ Deno.serve(async (req: Request) => {
   if (referralError) {
     console.error('Failed to clear referral links:', referralError.message);
     return json(500, { error: 'Account deletion failed — nothing was deleted' });
+  }
+
+  // Remove the caller's stored avatar (Storage objects don't cascade
+  // with the DB). Best effort: a storage hiccup must not block account
+  // deletion (an App Store requirement), so failures are only logged.
+  try {
+    const { data: files } = await admin.storage.from('avatars').list(userId);
+    if (files && files.length > 0) {
+      const { error: removeError } = await admin.storage
+        .from('avatars')
+        .remove(files.map((f) => `${userId}/${f.name}`));
+      if (removeError) {
+        console.error('Avatar cleanup failed:', removeError.message);
+      }
+    }
+  } catch (e) {
+    console.error('Avatar cleanup failed:', (e as Error).message);
   }
 
   // Deleting the auth user cascades to profiles, points_ledger and
