@@ -204,7 +204,10 @@ export default function Home() {
   }
 
   const points = profile?.points ?? 0;
-  const firstName = profile?.email?.split('@')[0] ?? 'fam';
+  // Greet by display name when one is set (Edit Profile) — first word of
+  // it — and fall back to the email prefix, as before.
+  const displayFirst = profile?.displayName?.trim().split(/\s+/)[0];
+  const firstName = displayFirst || profile?.email?.split('@')[0] || 'fam';
 
   return (
     <Screen

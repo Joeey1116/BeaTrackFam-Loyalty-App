@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Screen } from '../../components/Screen';
@@ -8,9 +8,14 @@ import {
   awardPoints,
   BIRTHDAY_REASON,
   DEMO_USER_ID,
+  DISPLAY_NAME_MAX,
   getLedger,
   getProfile,
+  removeAvatar,
   tierFor,
+  updateBirthday,
+  updateDisplayName,
+  uploadAvatar,
   type LedgerEntry,
   type Profile,
 } from '../../lib/loyalty';
@@ -28,6 +33,11 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editBirthday, setEditBirthday] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const configured = isSupabaseConfigured();
   // Session state comes from AuthProvider — never resolved per-screen.
   // The auth user's email doubles as the display fallback when the
@@ -64,22 +74,13 @@ export default function ProfileScreen() {
     }, [refresh]),
   );
 
-  const saveBirthday = async () => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthday.trim())) {
-      Alert.alert('Hmm', 'Use the YYYY-MM-DD format, like 2001-11-16.');
-      return;
-    }
-    if (!profile || profile.birthdayBonusClaimed) return;
+  // The 100-pt birthday bonus: claim state comes from the ledger (see
+  // lib/loyalty.ts buildProfile), never from the date field — so editing
+  // the birthday can never re-arm it.
+  const claimBirthdayBonus = async () => {
+    if (!profile?.birthday || profile.birthdayBonusClaimed) return;
     setSaving(true);
     try {
-      if (configured && supabase) {
-        // Real schema has no birthday_bonus_claimed column — the bonus state
-        // is derived from the ledger (see lib/loyalty.ts buildProfile).
-        await supabase.from('profiles').update({ birthday: birthday.trim() }).eq('id', uid);
-      } else if (profile) {
-        profile.birthday = birthday.trim();
-        profile.birthdayBonusClaimed = true;
-      }
       const result = await awardPoints(uid, 100, BIRTHDAY_REASON);
       if (result.ok) {
         Alert.alert('Happy birthday season.', '+100 pts, on us. We celebrate you.');
@@ -88,6 +89,76 @@ export default function ProfileScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const openEditProfile = () => {
+    setEditName(profile?.displayName ?? '');
+    setEditBirthday(profile?.birthday ?? '');
+    setEditOpen(true);
+  };
+
+  const saveEditProfile = async () => {
+    setSavingProfile(true);
+    try {
+      if (editName.trim() !== (profile?.displayName ?? '')) {
+        const named = await updateDisplayName(uid, editName);
+        if (!named.ok) {
+          Alert.alert('Hmm', named.error ?? 'Could not save your name.');
+          return;
+        }
+      }
+      if (editBirthday.trim() !== (profile?.birthday ?? '')) {
+        const born = await updateBirthday(uid, editBirthday);
+        if (!born.ok) {
+          Alert.alert('Hmm', born.error ?? 'Could not save your birthday.');
+          return;
+        }
+      }
+      setEditOpen(false);
+      await refresh();
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const changePhoto = async () => {
+    try {
+      const ImagePicker = await import('expo-image-picker');
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'No photo access',
+          'We need photo-library permission to set your profile photo. You can turn it on in Settings — or skip the photo, the Fam loves you anyway.',
+        );
+        return;
+      }
+      const picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 1,
+      });
+      if (picked.canceled || !picked.assets?.[0]?.uri) return;
+      setUploadingPhoto(true);
+      const result = await uploadAvatar(uid, picked.assets[0].uri);
+      setUploadingPhoto(false);
+      if (!result.ok) {
+        Alert.alert('Hmm', result.error ?? 'Could not upload that photo.');
+        return;
+      }
+      await refresh();
+    } catch {
+      setUploadingPhoto(false);
+      Alert.alert('Hmm', 'Could not open your photo library on this device.');
+    }
+  };
+
+  const removePhoto = async () => {
+    setUploadingPhoto(true);
+    const result = await removeAvatar(uid);
+    setUploadingPhoto(false);
+    if (!result.ok) Alert.alert('Hmm', result.error ?? 'Could not remove your photo.');
+    await refresh();
   };
 
   const signOut = async () => {
@@ -208,8 +279,26 @@ export default function ProfileScreen() {
       )}
 
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>EMAIL</Text>
-        <Text style={styles.cardValue}>{profile?.email || sessionEmail || '—'}</Text>
+        <View style={styles.identityRow}>
+          {profile?.avatarUrl ? (
+            <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <Text style={styles.avatarInitial}>
+                {(profile?.displayName || profile?.email || 'F').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <View style={styles.identityText}>
+            <Text style={styles.displayName}>
+              {profile?.displayName || profile?.email?.split('@')[0] || 'Fam'}
+            </Text>
+            <Text style={styles.identityEmail}>{profile?.email || sessionEmail || '—'}</Text>
+          </View>
+        </View>
+        <TouchableOpacity style={styles.secondary} onPress={openEditProfile} activeOpacity={0.8}>
+          <Text style={styles.secondaryText}>EDIT PROFILE</Text>
+        </TouchableOpacity>
         <Text style={styles.cardLabel}>TIER</Text>
         <Text style={styles.tierBadge}>{tier.name.toUpperCase()}</Text>
         <Text style={styles.cardLabel}>POINTS</Text>
@@ -218,29 +307,32 @@ export default function ProfileScreen() {
 
       <View style={styles.card}>
         <Text style={styles.cardLabel}>BIRTHDAY</Text>
-        {profile?.birthdayBonusClaimed ? (
+        {!profile?.birthday ? (
+          <>
+            <Text style={styles.hint}>
+              Set your birthday in Edit Profile — it powers your 100-pt birthday bonus and your
+              birthday reward.
+            </Text>
+            <TouchableOpacity style={styles.secondary} onPress={openEditProfile} activeOpacity={0.8}>
+              <Text style={styles.secondaryText}>SET BIRTHDAY</Text>
+            </TouchableOpacity>
+          </>
+        ) : profile.birthdayBonusClaimed ? (
           <Text style={styles.cardValue}>{profile.birthday} — bonus claimed 🎂</Text>
         ) : (
           <>
-            <Text style={styles.hint}>Set it once, get 100 pts every year.</Text>
-            <TextInput
-              style={styles.input}
-              value={birthday}
-              onChangeText={setBirthday}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor="#555555"
-              autoCorrect={false}
-            />
+            <Text style={styles.cardValue}>{profile.birthday}</Text>
+            <Text style={styles.hint}>Your birthday bonus is waiting — 100 pts, on us.</Text>
             <TouchableOpacity
               style={[styles.primary, saving && styles.primaryDisabled]}
-              onPress={saveBirthday}
+              onPress={claimBirthdayBonus}
               disabled={saving}
               activeOpacity={0.8}
             >
               {saving ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={styles.primaryText}>SAVE BIRTHDAY</Text>
+                <Text style={styles.primaryText}>CLAIM 100 PTS</Text>
               )}
             </TouchableOpacity>
           </>
@@ -324,6 +416,100 @@ export default function ProfileScreen() {
           </Text>
         </>
       )}
+
+      <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => setEditOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>EDIT PROFILE</Text>
+
+            <View style={styles.modalPhotoRow}>
+              {profile?.avatarUrl ? (
+                <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                  <Text style={styles.avatarInitial}>
+                    {(profile?.displayName || profile?.email || 'F').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )}
+              <View style={styles.modalPhotoButtons}>
+                <TouchableOpacity
+                  style={styles.secondary}
+                  onPress={changePhoto}
+                  disabled={uploadingPhoto}
+                  activeOpacity={0.8}
+                >
+                  {uploadingPhoto ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.secondaryText}>
+                      {profile?.avatarUrl ? 'CHANGE PHOTO' : 'ADD PHOTO'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                {profile?.avatarUrl && (
+                  <TouchableOpacity
+                    style={styles.secondary}
+                    onPress={removePhoto}
+                    disabled={uploadingPhoto}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.secondaryText}>REMOVE PHOTO</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <Text style={styles.cardLabel}>DISPLAY NAME</Text>
+            <TextInput
+              style={styles.input}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="What should we call you?"
+              placeholderTextColor="#555555"
+              autoCorrect={false}
+              maxLength={DISPLAY_NAME_MAX}
+            />
+            <Text style={styles.cardLabel}>BIRTHDAY</Text>
+            <TextInput
+              style={styles.input}
+              value={editBirthday}
+              onChangeText={setEditBirthday}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#555555"
+              autoCorrect={false}
+            />
+            <Text style={styles.hint}>
+              Heads up: birthday rewards are tracked by claim, once per cycle — changing the date
+              doesn't reset a claim.
+            </Text>
+            <Text style={styles.cardLabel}>EMAIL</Text>
+            <Text style={styles.cardValue}>{profile?.email || sessionEmail || '—'}</Text>
+            <Text style={styles.hint}>Your sign-in email can't be changed here.</Text>
+
+            <TouchableOpacity
+              style={[styles.primary, savingProfile && styles.primaryDisabled]}
+              onPress={saveEditProfile}
+              disabled={savingProfile}
+              activeOpacity={0.8}
+            >
+              {savingProfile ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={styles.primaryText}>SAVE</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondary}
+              onPress={() => setEditOpen(false)}
+              disabled={savingProfile}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.secondaryText}>CANCEL</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -430,4 +616,29 @@ const styles = StyleSheet.create({
   deleteAccountDisabled: { opacity: 0.5 },
   deleteAccountText: { color: '#ff5555', fontSize: 15, fontWeight: '800', letterSpacing: 2 },
   deleteHint: { color: '#666666', fontSize: 12, textAlign: 'center', marginTop: 10, lineHeight: 17 },
+  identityRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#222222' },
+  avatarPlaceholder: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#3a3a3a' },
+  avatarInitial: { color: '#ffffff', fontSize: 26, fontWeight: '800' },
+  identityText: { flex: 1, marginLeft: 14 },
+  displayName: { color: '#ffffff', fontSize: 22, fontWeight: '800' },
+  identityEmail: { color: '#888888', fontSize: 14, marginTop: 2 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#111111',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+  },
+  modalTitle: { color: '#ffffff', fontSize: 20, fontWeight: '800', letterSpacing: 2, marginBottom: 8 },
+  modalPhotoRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 6 },
+  modalPhotoButtons: { flex: 1, marginLeft: 14, gap: 8 },
 });
