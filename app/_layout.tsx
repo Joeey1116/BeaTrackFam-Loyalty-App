@@ -213,6 +213,7 @@ export default function RootLayout() {
         <Stack.Screen name="sign-in" />
         <Stack.Screen name="sign-up" />
         <Stack.Screen name="reset-password" />
+        <Stack.Screen name="privacy-policy" />
         <Stack.Screen name="(tabs)" />
       </Stack>
     </>

@@ -247,6 +247,18 @@ export default function ProfileScreen() {
             {trackingStatus === 'granted' ? 'TRACKING: ON' : 'ALLOW TRACKING'}
           </Text>
         </TouchableOpacity>
+        <Text style={styles.cardLabel}>PRIVACY POLICY</Text>
+        <Text style={styles.hint}>
+          What we collect, how we use it, and the choices you have — the full policy, right here in
+          the app.
+        </Text>
+        <TouchableOpacity
+          style={styles.secondary}
+          onPress={() => router.push('/privacy-policy')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.secondaryText}>VIEW PRIVACY POLICY</Text>
+        </TouchableOpacity>
       </View>
 
       <Text style={styles.sectionTitle}>POINTS HISTORY</Text>
