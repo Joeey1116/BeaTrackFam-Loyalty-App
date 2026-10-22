@@ -15,7 +15,9 @@ export function RewardCard({
       <View style={styles.textCol}>
         <Text style={styles.title}>{reward.title}</Text>
         <Text style={styles.description}>{reward.description}</Text>
-        <Text style={styles.cost}>{reward.cost} pts</Text>
+        <Text style={styles.cost}>
+          {reward.kind === 'birthday' ? 'BIRTHDAY TREAT — FREE' : `${reward.cost} pts`}
+        </Text>
       </View>
       <TouchableOpacity
         style={[styles.button, !canAfford && styles.buttonDisabled]}

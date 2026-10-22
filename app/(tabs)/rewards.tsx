@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -7,30 +7,46 @@ import { RewardCard } from '../../components/RewardCard';
 import {
   DEMO_USER_ID,
   getProfile,
+  getRedemptions,
   getRewards,
+  makeIdempotencyKey,
   redeemReward,
+  type Redemption,
   type Reward,
 } from '../../lib/loyalty';
 import { useAuth } from '../../lib/auth';
 
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export default function Rewards() {
   const [points, setPoints] = useState(0);
   const [rewards, setRewards] = useState<Reward[]>([]);
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
   const [loading, setLoading] = useState(true);
   const [redeeming, setRedeeming] = useState<Reward | null>(null);
   const [code, setCode] = useState<string | null>(null);
+  const [codeEmailed, setCodeEmailed] = useState(false);
+  // One idempotency key per redemption attempt, kept across retries of
+  // the SAME attempt — the server honors each key exactly once, so a
+  // double-tap or flaky network can't mint two codes or deduct twice.
+  const attemptKeys = useRef(new Map<string, string>());
   // Session state comes from AuthProvider — never resolved per-screen.
   const { userId } = useAuth();
   const uid = userId ?? DEMO_USER_ID;
 
   const refresh = useCallback(async () => {
     try {
-      const [profile, list] = await Promise.all([
+      const [profile, list, mine] = await Promise.all([
         getProfile(uid).catch(() => null),
         getRewards().catch(() => []),
+        getRedemptions(uid).catch(() => []),
       ]);
       setPoints(profile?.points ?? 0);
       setRewards(list);
+      setRedemptions(mine);
     } finally {
       setLoading(false);
     }
@@ -50,19 +66,32 @@ export default function Rewards() {
   );
 
   const confirmRedeem = (reward: Reward) => {
+    // A fresh attempt gets a fresh idempotency key; backing out without
+    // redeeming retires the key unused.
+    let key = attemptKeys.current.get(reward.id);
+    if (!key) {
+      key = makeIdempotencyKey();
+      attemptKeys.current.set(reward.id, key);
+    }
     Alert.alert(
       'Redeem this reward?',
       `${reward.title} — ${reward.cost} pts. This can't be undone.`,
       [
-        { text: 'Not yet', style: 'cancel' },
+        {
+          text: 'Not yet',
+          style: 'cancel',
+          onPress: () => attemptKeys.current.delete(reward.id),
+        },
         {
           text: 'Yes, redeem',
           onPress: async () => {
             setRedeeming(reward);
-            const result = await redeemReward(uid, reward);
+            const result = await redeemReward(uid, reward, key!);
             setRedeeming(null);
             if (result.ok && result.code) {
+              attemptKeys.current.delete(reward.id);
               setCode(result.code);
+              setCodeEmailed(!!result.emailSent);
               // Milestone reached — close out the Live Activity with a win.
               try {
                 const { endMilestoneActivity } = await import('../../lib/liveActivity');
@@ -77,6 +106,8 @@ export default function Rewards() {
               }
               await refresh();
             } else {
+              // Keep the attempt key: a retry of this attempt replays
+              // against the same key and can never double-charge.
               Alert.alert('Hmm', result.error ?? 'Could not redeem. Try again.');
             }
           },
@@ -85,11 +116,9 @@ export default function Rewards() {
     );
   };
 
-  const copyCode = async () => {
-    if (code) {
-      await Clipboard.setStringAsync(code);
-      Alert.alert('Copied', 'Your code is on the clipboard.');
-    }
+  const copyCode = async (value: string) => {
+    await Clipboard.setStringAsync(value);
+    Alert.alert('Copied', 'Your code is on the clipboard.');
   };
 
   if (loading) {
@@ -120,13 +149,42 @@ export default function Rewards() {
         />
       ))}
 
+      <Text style={styles.sectionTitle}>MY CODES</Text>
+      {redemptions.length === 0 ? (
+        <Text style={styles.empty}>
+          Nothing redeemed yet. Your codes will live here — and in your email — for good.
+        </Text>
+      ) : (
+        redemptions.map((r) => (
+          <TouchableOpacity
+            key={r.id}
+            style={styles.codeRow}
+            onPress={() => copyCode(r.code)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.codeRowText}>
+              <Text style={styles.codeRowTitle}>{r.rewardTitle}</Text>
+              <Text style={styles.codeRowDate}>
+                {formatDate(r.createdAt)}{r.status !== 'active' ? ` — ${r.status}` : ''}
+              </Text>
+            </View>
+            <Text style={styles.codeRowCode}>{r.code}</Text>
+          </TouchableOpacity>
+        ))
+      )}
+
       <Modal visible={code !== null} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>YOU'RE IN.</Text>
-            <Text style={styles.modalText}>Show or enter this code at checkout:</Text>
+            <Text style={styles.modalText}>
+              Show or enter this code at checkout:
+              {codeEmailed
+                ? ' We emailed it to you too, and it lives under MY CODES below.'
+                : ' It lives under MY CODES below — it is not going anywhere.'}
+            </Text>
             <Text style={styles.modalCode}>{code}</Text>
-            <TouchableOpacity style={styles.primary} onPress={copyCode} activeOpacity={0.8}>
+            <TouchableOpacity style={styles.primary} onPress={() => code && copyCode(code)} activeOpacity={0.8}>
               <Text style={styles.primaryText}>COPY CODE</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondary} onPress={() => setCode(null)} activeOpacity={0.8}>
@@ -182,4 +240,20 @@ const styles = StyleSheet.create({
   primaryText: { color: '#000000', fontSize: 15, fontWeight: '800', letterSpacing: 2 },
   secondary: { marginTop: 12, paddingVertical: 10 },
   secondaryText: { color: '#aaaaaa', fontSize: 14, fontWeight: '600' },
+  sectionTitle: { color: '#888888', fontSize: 12, fontWeight: '700', letterSpacing: 3, marginTop: 16, marginBottom: 12 },
+  empty: { color: '#666666', fontSize: 14, lineHeight: 20, marginBottom: 8 },
+  codeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111111',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    marginBottom: 10,
+  },
+  codeRowText: { flex: 1, paddingRight: 12 },
+  codeRowTitle: { color: '#dddddd', fontSize: 14, fontWeight: '700' },
+  codeRowDate: { color: '#666666', fontSize: 12, marginTop: 2 },
+  codeRowCode: { color: '#ffffff', fontSize: 15, fontWeight: '800', letterSpacing: 1 },
 });

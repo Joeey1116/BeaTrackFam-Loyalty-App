@@ -8,12 +8,21 @@
  *
  * Real schema:
  *   profiles       id uuid PK, email, points, tier, referral_code unique,
- *                  referred_by uuid, birthday date
+ *                  referred_by uuid, birthday date, display_name,
+ *                  avatar_url
  *   points_ledger  id, user_id, delta, reason
- *   rewards        id, title, cost, description, active
- *   redemptions    id, user_id, reward_id, code
- *   RPCs: award_points(p_user_id, p_delta, p_reason),
- *         redeem_reward(p_user_id, p_reward_id, p_code)
+ *   rewards        id, title, cost, description, active, kind,
+ *                  discount_kind, discount_value, min_subtotal
+ *   redemptions    id, user_id, reward_id, code, idempotency_key,
+ *                  cycle_key, status, delivery, email, email_sent_at
+ *   RPC: award_points(p_user_id, p_delta, p_reason)
+ *
+ * Redemptions (build 19) go through the `redeem-reward` Edge Function:
+ * the server mints a REAL single-use store code (Shopify Admin API, a
+ * pre-created code pool, or a manual claim code), records the redemption
+ * account-side via complete_redemption(), and emails the code. A
+ * completed redemption is final — reinstalls and new devices read the
+ * same server history; nothing can be re-minted for free.
  *
  * RLS notes handled here:
  * - Clients can only read their OWN profile row and ledger rows, so
@@ -58,6 +67,8 @@ export interface Profile {
   birthday: string | null; // YYYY-MM-DD
   birthdayBonusClaimed: boolean;
   claimedActions: string[];
+  displayName: string;
+  avatarUrl: string | null;
 }
 
 export interface LedgerEntry {
@@ -68,11 +79,22 @@ export interface LedgerEntry {
   createdAt: string;
 }
 
+export type RewardKind = 'points' | 'birthday';
+
 export interface Reward {
   id: string;
   title: string;
   cost: number;
   description: string;
+  kind: RewardKind;
+}
+
+export interface Redemption {
+  id: string;
+  rewardTitle: string;
+  code: string;
+  status: string;
+  createdAt: string;
 }
 
 export const DEMO_USER_ID = 'demo-user';
@@ -88,6 +110,16 @@ export const ONE_TIME_REASONS: Record<string, string> = {
 };
 
 export const BIRTHDAY_REASON = 'Birthday bonus';
+
+/**
+ * Birthday reward policy (Joey, Oct 22 2026 — FINAL): 'yearly' means the
+ * birthday reward can be claimed once per birthday cycle (a rolling
+ * 12-month window). ENFORCED server-side in complete_redemption() (see
+ * supabase/schema.sql) from CLAIM HISTORY — editing the birthday field
+ * never unlocks another claim inside a cycle. This constant is the
+ * client mirror of that policy point.
+ */
+export const BIRTHDAY_CYCLE = 'yearly' as const;
 export const REFERRAL_GIVEN_REASON = 'Referral bonus — a friend joined the Fam';
 export const REFERRAL_RECEIVED_REASON = 'Referral bonus — welcome to the Fam';
 
@@ -97,6 +129,7 @@ export const REFERRAL_RECEIVED_REASON = 'Referral bonus — welcome to the Fam';
 
 const demoProfiles = new Map<string, Profile>();
 const demoLedger = new Map<string, LedgerEntry[]>();
+const demoRedemptions = new Map<string, Redemption[]>();
 
 function seedDemoStore() {
   if (demoProfiles.has(DEMO_USER_ID)) return;
@@ -111,6 +144,8 @@ function seedDemoStore() {
     birthday: null,
     birthdayBonusClaimed: true,
     claimedActions: ['follow-ig'],
+    displayName: 'Demo Fam',
+    avatarUrl: null,
   });
   demoLedger.set(DEMO_USER_ID, [
     { id: 'seed-1', userId: DEMO_USER_ID, delta: 1000, reason: "Welcome to the Fam — thank God you're here", createdAt: now },
@@ -118,13 +153,17 @@ function seedDemoStore() {
     { id: 'seed-3', userId: DEMO_USER_ID, delta: 100, reason: BIRTHDAY_REASON, createdAt: now },
     { id: 'seed-4', userId: DEMO_USER_ID, delta: 20, reason: ONE_TIME_REASONS['follow-ig'], createdAt: now },
   ]);
+  demoRedemptions.set(DEMO_USER_ID, [
+    { id: 'seed-r1', rewardTitle: '10% Off Your Order', code: 'BTF-DEMO1', status: 'active', createdAt: now },
+  ]);
 }
 
 const DEMO_REWARDS: Reward[] = [
-  { id: 'reward-10off', title: '10% Off Your Order', cost: 100, description: 'Take 10% off any order at beatrackfam.info. One code per redemption.' },
-  { id: 'reward-freeship', title: 'Free Shipping', cost: 250, description: 'Free US shipping on your next order.' },
-  { id: 'reward-10dollar', title: '$10 Off', cost: 500, description: '$10 off any order over $25.' },
-  { id: 'reward-freetee', title: 'Free Tee', cost: 1000, description: "A free BeaTrackFam tee of your choice. We'll email you to confirm size." },
+  { id: 'reward-10off', title: '10% Off Your Order', cost: 100, description: 'Take 10% off any order at beatrackfam.info. One code per redemption.', kind: 'points' },
+  { id: 'reward-freeship', title: 'Free Shipping', cost: 250, description: 'Free US shipping on your next order.', kind: 'points' },
+  { id: 'reward-10dollar', title: '$10 Off', cost: 500, description: '$10 off any order over $25.', kind: 'points' },
+  { id: 'reward-freetee', title: 'Free Tee', cost: 1000, description: "A free BeaTrackFam tee of your choice. We'll email you to confirm size.", kind: 'points' },
+  { id: 'reward-birthday', title: 'Birthday 10% Off', cost: 0, description: 'Your birthday treat: 10% off, one code per birthday cycle. Happy birthday, Fam.', kind: 'birthday' },
 ];
 
 export function generateReferralCode(): string {
@@ -176,7 +215,36 @@ function buildProfile(row: any, reasons: string[]): Profile {
     birthday: row.birthday ?? null,
     birthdayBonusClaimed: reasons.includes(BIRTHDAY_REASON),
     claimedActions,
+    displayName: row.display_name ?? '',
+    avatarUrl: row.avatar_url ?? null,
   };
+}
+
+const PROFILE_COLUMNS =
+  'id, email, points, referral_code, referred_by, birthday, display_name, avatar_url';
+const PROFILE_COLUMNS_BASE =
+  'id, email, points, referral_code, referred_by, birthday';
+
+/**
+ * Fetch one profile row. If the build-19 columns (display_name,
+ * avatar_url) aren't in the database yet — i.e. the migration hasn't
+ * been run — fall back to the base columns so profiles keep loading
+ * instead of failing wholesale.
+ */
+async function fetchProfileRow(userId: string): Promise<any | null> {
+  if (!supabase) return null;
+  const full = await supabase
+    .from('profiles')
+    .select(PROFILE_COLUMNS)
+    .eq('id', userId)
+    .maybeSingle();
+  if (!full.error) return full.data;
+  const base = await supabase
+    .from('profiles')
+    .select(PROFILE_COLUMNS_BASE)
+    .eq('id', userId)
+    .maybeSingle();
+  return base.error ? null : base.data;
 }
 
 export async function ensureProfile(userId: string, email: string): Promise<Profile> {
@@ -194,26 +262,25 @@ export async function ensureProfile(userId: string, email: string): Promise<Prof
         birthday: null,
         birthdayBonusClaimed: false,
         claimedActions: [],
+        displayName: '',
+        avatarUrl: null,
       };
       demoProfiles.set(userId, profile);
       demoLedger.set(userId, []);
+      demoRedemptions.set(userId, []);
     }
     return profile;
   }
 
   // The schema's auth trigger normally creates the profile on signup;
   // this is the client-side fallback.
-  let { data } = await supabase
-    .from('profiles')
-    .select('id, email, points, referral_code, referred_by, birthday')
-    .eq('id', userId)
-    .maybeSingle();
+  let data = await fetchProfileRow(userId);
 
   if (!data) {
     const { data: inserted, error } = await supabase
       .from('profiles')
       .insert({ id: userId, email, referral_code: generateReferralCode() })
-      .select('id, email, points, referral_code, referred_by, birthday')
+      .select(PROFILE_COLUMNS_BASE)
       .single();
     if (error) throw new Error('Could not create your profile. Try again.');
     data = inserted;
@@ -230,11 +297,7 @@ export async function ensureProfile(userId: string, email: string): Promise<Prof
       data = { ...data, referral_code: healed };
     } else {
       // Unique collision or a lost race — re-read whatever is stored now.
-      const { data: reread } = await supabase
-        .from('profiles')
-        .select('id, email, points, referral_code, referred_by, birthday')
-        .eq('id', userId)
-        .maybeSingle();
+      const reread = await fetchProfileRow(userId);
       if (reread) data = reread;
     }
   }
@@ -247,13 +310,149 @@ export async function getProfile(userId: string): Promise<Profile | null> {
     seedDemoStore();
     return demoProfiles.get(userId) ?? null;
   }
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, email, points, referral_code, referred_by, birthday')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error || !data) return null;
+  const data = await fetchProfileRow(userId);
+  if (!data) return null;
   return buildProfile(data, await realLedgerReasons(userId));
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit Profile: display name, birthday, avatar                        */
+/* ------------------------------------------------------------------ */
+
+export const DISPLAY_NAME_MAX = 40;
+
+export function validateDisplayName(raw: string): string | null {
+  const name = raw.trim().replace(/\s+/g, ' ');
+  if (!name) return null;
+  return name.slice(0, DISPLAY_NAME_MAX);
+}
+
+export async function updateDisplayName(
+  userId: string,
+  raw: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const name = validateDisplayName(raw);
+  if (!name) return { ok: false, error: 'Pick a name first — even just your first name.' };
+  if (!isSupabaseConfigured() || !supabase) {
+    seedDemoStore();
+    const profile = demoProfiles.get(userId);
+    if (!profile) return { ok: false, error: 'No profile found.' };
+    profile.displayName = name;
+    return { ok: true };
+  }
+  const { error } = await supabase
+    .from('profiles')
+    .update({ display_name: name })
+    .eq('id', userId);
+  if (error) return { ok: false, error: 'Could not save your name. Try again.' };
+  return { ok: true };
+}
+
+/**
+ * Update the birthday date. This edits ONLY the date field: reward
+ * eligibility is governed by claim history server-side (see
+ * complete_redemption), so moving the date can never unlock another
+ * birthday claim inside the current cycle.
+ */
+export async function updateBirthday(
+  userId: string,
+  birthday: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const value = birthday.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) {
+    return { ok: false, error: 'Use the YYYY-MM-DD format, like 2001-11-16.' };
+  }
+  if (!isSupabaseConfigured() || !supabase) {
+    seedDemoStore();
+    const profile = demoProfiles.get(userId);
+    if (!profile) return { ok: false, error: 'No profile found.' };
+    profile.birthday = value;
+    return { ok: true };
+  }
+  const { error } = await supabase
+    .from('profiles')
+    .update({ birthday: value })
+    .eq('id', userId);
+  if (error) return { ok: false, error: 'Could not save your birthday. Try again.' };
+  return { ok: true };
+}
+
+export const AVATAR_BUCKET = 'avatars';
+export const avatarPath = (userId: string) => `${userId}/avatar.jpg`;
+
+/**
+ * Resize/compress a picked photo, upload it to the avatars bucket, and
+ * store its public URL on the profile. Replaces any previous avatar
+ * (same object path, upsert). Demo mode keeps the photo device-local —
+ * clearly separate from real accounts, like all demo data.
+ */
+export async function uploadAvatar(
+  userId: string,
+  pickedUri: string,
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  let uri = pickedUri;
+  try {
+    const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+    const result = await manipulateAsync(
+      pickedUri,
+      [{ resize: { width: 512 } }],
+      { compress: 0.8, format: SaveFormat.JPEG },
+    );
+    uri = result.uri;
+  } catch {
+    // Manipulator unavailable — upload the picked image as-is.
+  }
+
+  if (!isSupabaseConfigured() || !supabase) {
+    seedDemoStore();
+    const profile = demoProfiles.get(userId);
+    if (!profile) return { ok: false, error: 'No profile found.' };
+    profile.avatarUrl = uri;
+    return { ok: true, url: uri };
+  }
+
+  try {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const path = avatarPath(userId);
+    const { error: uploadError } = await supabase.storage
+      .from(AVATAR_BUCKET)
+      .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+    if (uploadError) throw uploadError;
+    const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    // Cache-bust so a replaced photo shows immediately (same URL path).
+    const url = `${data.publicUrl}?v=${Date.now()}`;
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ avatar_url: url })
+      .eq('id', userId);
+    if (updateError) throw updateError;
+    return { ok: true, url };
+  } catch {
+    return { ok: false, error: 'Could not upload that photo. Try again.' };
+  }
+}
+
+export async function removeAvatar(
+  userId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured() || !supabase) {
+    seedDemoStore();
+    const profile = demoProfiles.get(userId);
+    if (profile) profile.avatarUrl = null;
+    return { ok: true };
+  }
+  try {
+    await supabase.storage.from(AVATAR_BUCKET).remove([avatarPath(userId)]);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ avatar_url: null })
+      .eq('id', userId);
+    if (error) throw error;
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Could not remove your photo. Try again.' };
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -286,17 +485,26 @@ export async function getLedger(userId: string): Promise<LedgerEntry[]> {
 
 export async function getRewards(): Promise<Reward[]> {
   if (!isSupabaseConfigured() || !supabase) return DEMO_REWARDS;
-  const { data } = await supabase
-    .from('rewards')
-    .select('id, title, cost, description')
-    .eq('active', true)
-    .order('cost', { ascending: true });
-  return (data ?? []).map((row: any) => ({
+  const mapRow = (row: any): Reward => ({
     id: row.id,
     title: row.title,
     cost: row.cost,
     description: row.description ?? '',
-  }));
+    kind: row.kind === 'birthday' ? 'birthday' : 'points',
+  });
+  const withKind = await supabase
+    .from('rewards')
+    .select('id, title, cost, description, kind')
+    .eq('active', true)
+    .order('cost', { ascending: true });
+  if (!withKind.error) return (withKind.data ?? []).map(mapRow);
+  // Pre-migration database (no kind column yet) — base columns still work.
+  const base = await supabase
+    .from('rewards')
+    .select('id, title, cost, description')
+    .eq('active', true)
+    .order('cost', { ascending: true });
+  return (base.data ?? []).map(mapRow);
 }
 
 /* ------------------------------------------------------------------ */
@@ -359,47 +567,134 @@ export async function awardPoints(
 }
 
 /* ------------------------------------------------------------------ */
-/* Redemption                                                          */
+/* Redemption (build 19 — server-minted codes, final & account-keyed) */
 /* ------------------------------------------------------------------ */
 
 export interface RedeemResult {
   ok: boolean;
   code?: string;
+  emailSent?: boolean;
   error?: string;
 }
 
-export async function redeemReward(userId: string, reward: Reward): Promise<RedeemResult> {
+/**
+ * One idempotency key per redemption ATTEMPT. The rewards screen keeps
+ * the key for an attempt across retries, so a double-tap or a flaky
+ * network can never mint two codes or deduct twice — the server honors
+ * each key exactly once (see the redeem-reward Edge Function).
+ */
+export function makeIdempotencyKey(): string {
+  const rand = makeCode('K').slice(2); // 6 chars
+  return `rdm-${Date.now().toString(36)}-${rand}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+function friendlyRedeemError(raw: string, reward: Reward, points: number): string {
+  const msg = raw.toLowerCase();
+  if (msg.includes('insufficient points')) {
+    return reward.cost > points
+      ? `You need ${reward.cost - points} more pts for this one.`
+      : 'Not enough points for this one yet.';
+  }
+  if (msg.includes('birthday not set')) {
+    return 'Set your birthday in Profile first — then this one is yours.';
+  }
+  if (msg.includes('birthday already claimed')) {
+    return `You've already claimed your birthday reward this cycle — it comes back next cycle (BIRTHDAY_CYCLE = ${BIRTHDAY_CYCLE}).`;
+  }
+  if (msg.includes('no codes available')) {
+    return 'Codes for this reward are being restocked — check back soon.';
+  }
+  if (msg.includes('not found')) return 'That reward is no longer available.';
+  if (msg.includes('session')) return raw;
+  return 'Could not redeem. Try again.';
+}
+
+export async function redeemReward(
+  userId: string,
+  reward: Reward,
+  idempotencyKey: string,
+): Promise<RedeemResult> {
   const profile = await getProfile(userId);
   if (!profile) return { ok: false, error: 'No profile found.' };
   if (profile.points < reward.cost) {
     return { ok: false, error: `You need ${reward.cost - profile.points} more pts for this one.` };
   }
-
-  const code = makeCode('BTF');
-
-  if (isSupabaseConfigured() && supabase) {
-    // The redeem_reward RPC checks the balance, deducts, and records the
-    // redemption atomically server-side.
-    const { error } = await supabase.rpc('redeem_reward', {
-      p_user_id: userId,
-      p_reward_id: reward.id,
-      p_code: code,
-    });
-    if (error) {
-      const msg = (error.message ?? '').toLowerCase();
-      if (msg.includes('insufficient points')) {
-        return { ok: false, error: 'Not enough points for this one yet.' };
-      }
-      return { ok: false, error: 'Could not redeem. Try again.' };
-    }
-    return { ok: true, code };
+  if (reward.kind === 'birthday' && !profile.birthday) {
+    return { ok: false, error: 'Set your birthday in Profile first — then this one is yours.' };
   }
 
-  // Demo mode
+  if (isSupabaseConfigured() && supabase) {
+    // The Edge Function mints the real store code, records the
+    // redemption server-side (exactly once per idempotency key), and
+    // emails the code. Nothing about a completed redemption lives only
+    // on this device.
+    const { data, error } = await supabase.functions.invoke('redeem-reward', {
+      body: { reward_id: reward.id, idempotency_key: idempotencyKey },
+    });
+    if (error) {
+      let raw = error.message ?? '';
+      try {
+        const ctx = (error as any).context;
+        if (ctx && typeof ctx.json === 'function') {
+          const parsed = await ctx.json();
+          if (parsed?.error) raw = String(parsed.error);
+        }
+      } catch {
+        // Keep the generic message.
+      }
+      return { ok: false, error: friendlyRedeemError(raw, reward, profile.points) };
+    }
+    const code = (data as any)?.code as string | undefined;
+    if (!code) return { ok: false, error: 'Could not redeem. Try again.' };
+    return { ok: true, code, emailSent: !!(data as any)?.email_sent };
+  }
+
+  // Demo mode — local-only sample flow, clearly separate from real
+  // accounts: the "code" is a demo string, kept in the in-memory store.
   seedDemoStore();
+  if (reward.kind === 'birthday') {
+    const list = demoRedemptions.get(userId) ?? [];
+    const last = list
+      .filter((r) => r.rewardTitle === reward.title)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (last && Date.now() - Date.parse(last.createdAt) < 365.25 * 24 * 3600 * 1000) {
+      return { ok: false, error: friendlyRedeemError('birthday already claimed this cycle', reward, profile.points) };
+    }
+  }
   const deducted = await awardPoints(userId, -reward.cost, `Redeemed: ${reward.title}`);
   if (!deducted.ok) return { ok: false, error: deducted.error ?? 'Could not redeem. Try again.' };
-  return { ok: true, code };
+  const code = makeCode('BTF');
+  const list = demoRedemptions.get(userId) ?? [];
+  list.unshift({
+    id: makeCode('R'),
+    rewardTitle: reward.title,
+    code,
+    status: 'active',
+    createdAt: new Date().toISOString(),
+  });
+  demoRedemptions.set(userId, list);
+  return { ok: true, code, emailSent: false };
+}
+
+export async function getRedemptions(userId: string): Promise<Redemption[]> {
+  if (!isSupabaseConfigured() || !supabase) {
+    seedDemoStore();
+    return [...(demoRedemptions.get(userId) ?? [])];
+  }
+  const { data, error } = await supabase
+    .from('redemptions')
+    .select('id, code, status, created_at, rewards(title)')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) return [];
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    rewardTitle: (row.rewards as any)?.title ?? 'Reward',
+    code: row.code,
+    status: row.status ?? 'active',
+    createdAt: row.created_at,
+  }));
 }
 
 /* ------------------------------------------------------------------ */
