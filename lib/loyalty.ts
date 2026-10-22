@@ -24,6 +24,7 @@
  */
 
 import { isSupabaseConfigured, supabase } from './supabase';
+import { clearPendingReferral, peekPendingReferral } from './pendingReferral';
 
 export type Tier = 'fam' | 'loyal' | 'ride-or-die';
 
@@ -154,6 +155,17 @@ export async function getSessionUserId(): Promise<string | null> {
   }
 }
 
+/** Email of the signed-in auth user, straight from the session (display fallback). */
+export async function getSessionUserEmail(): Promise<string | null> {
+  if (!isSupabaseConfigured() || !supabase) return null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user.email ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Profiles                                                            */
 /* ------------------------------------------------------------------ */
@@ -176,7 +188,9 @@ function buildProfile(row: any, reasons: string[]): Profile {
     userId: row.id,
     email: row.email ?? '',
     points: row.points ?? 0,
-    referralCode: row.referral_code,
+    // The only profile field that can come back NULL from the DB (rows made
+    // before the signup trigger set a code) — coalesce like every other field.
+    referralCode: row.referral_code ?? '',
     referredBy: row.referred_by ?? null,
     referredCount: reasons.filter((r) => r === REFERRAL_GIVEN_REASON).length,
     birthday: row.birthday ?? null,
@@ -223,6 +237,26 @@ export async function ensureProfile(userId: string, email: string): Promise<Prof
       .single();
     if (error) throw new Error('Could not create your profile. Try again.');
     data = inserted;
+  } else if (!data.referral_code) {
+    // Self-heal: a row created before the DB trigger assigned codes (or by an
+    // older schema) can carry a NULL referral_code — the Refer tab then shows
+    // "—" forever. Generate one, save it, and use it.
+    const healed = generateReferralCode();
+    const { error: healError } = await supabase
+      .from('profiles')
+      .update({ referral_code: healed })
+      .eq('id', userId);
+    if (!healError) {
+      data = { ...data, referral_code: healed };
+    } else {
+      // Unique collision or a lost race — re-read whatever is stored now.
+      const { data: reread } = await supabase
+        .from('profiles')
+        .select('id, email, points, referral_code, referred_by, birthday')
+        .eq('id', userId)
+        .maybeSingle();
+      if (reread) data = reread;
+    }
   }
 
   return buildProfile(data, await realLedgerReasons(userId));
@@ -454,6 +488,23 @@ export async function applyReferral(newUserId: string, code: string): Promise<Re
     return { ok: false, error: 'Referral saved, but the bonus points hiccuped — they will land shortly.' };
   }
   return { ok: true };
+}
+
+/**
+ * Apply a referral code that was stashed at sign-up (lib/pendingReferral).
+ * Email-confirmed sign-ups have no session when the code is typed, so the
+ * deep-link handler and the sign-in flow call this once a session exists and
+ * the profile is ensured. The stash is cleared on any definitive outcome;
+ * it is kept only when the server can't process referrals at all yet, so a
+ * later sign-in can retry.
+ */
+export async function applyPendingReferral(userId: string): Promise<void> {
+  const code = await peekPendingReferral();
+  if (!code) return;
+  const result = await applyReferral(userId, code);
+  if (result.ok || !(result.error ?? '').includes('not set up')) {
+    await clearPendingReferral();
+  }
 }
 
 /*
