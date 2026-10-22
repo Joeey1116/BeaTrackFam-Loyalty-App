@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Screen } from '../../components/Screen';
 import { DEMO_USER_ID, getProfile, getSessionUserId, type Profile } from '../../lib/loyalty';
@@ -18,9 +19,14 @@ export default function Refer() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  // Refetch on every focus, not just first mount: tab screens stay mounted,
+  // so a mount-only fetch froze whatever the session looked like at that
+  // instant (e.g. the demo profile before a confirmation sign-in landed).
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
 
   const copyCode = async () => {
     if (profile?.referralCode) {

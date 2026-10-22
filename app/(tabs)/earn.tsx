@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Alert, StyleSheet, Text } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Screen } from '../../components/Screen';
 import { ActionRow } from '../../components/ActionRow';
@@ -30,9 +30,13 @@ export default function Earn() {
     setClaimed(profile?.claimedActions ?? []);
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  // Refetch on every focus — tab screens stay mounted, so a mount-only
+  // fetch goes stale the moment the session changes.
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
 
   const grant = async (
     actionId: string | null,

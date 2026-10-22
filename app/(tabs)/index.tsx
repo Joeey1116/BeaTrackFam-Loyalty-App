@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Screen } from '../../components/Screen';
 import { PointsCard } from '../../components/PointsCard';
 import { TierBar } from '../../components/TierBar';
@@ -78,6 +79,21 @@ export default function Home() {
     // One-time welcome after confirming the email via the deep link.
     if (takeEmailConfirmedPending()) setShowWelcome(true);
   }, [load]);
+
+  // Refetch whenever Home regains focus (the mount load above covers the
+  // first focus). Tab screens stay mounted, so without this a session that
+  // landed after first mount — e.g. an email-confirmation sign-in — never
+  // showed up until the app was force-closed.
+  const firstFocusRef = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocusRef.current) {
+        firstFocusRef.current = false;
+        return;
+      }
+      load();
+    }, [load]),
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Screen } from '../../components/Screen';
 import { RewardCard } from '../../components/RewardCard';
@@ -36,9 +37,13 @@ export default function Rewards() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  // Refetch on every focus — tab screens stay mounted, so a mount-only
+  // fetch goes stale the moment the session changes.
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
 
   const confirmRedeem = (reward: Reward) => {
     Alert.alert(
