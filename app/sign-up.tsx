@@ -5,6 +5,7 @@ import { Screen } from '../components/Screen';
 import { Logo } from '../components/Logo';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { applyReferral, ensureProfile } from '../lib/loyalty';
+import { stashPendingReferral } from '../lib/pendingReferral';
 
 /** Where signup-confirmation emails send the user back (allowlisted in Supabase). */
 const CONFIRM_REDIRECT = 'beatrackfamrewards://confirmed';
@@ -95,7 +96,11 @@ export default function SignUp() {
       }
       // Supabase may require email confirmation — then there is no session yet
       // and we must NOT try to touch the database (RLS would reject it).
+      // A typed referral code can't be applied now either — stash it on the
+      // device; the confirmation deep link (or the first sign-in) applies it
+      // once a session exists. Without this the code was silently dropped.
       if (!data.session) {
+        if (referralCode.trim()) await stashPendingReferral(referralCode);
         setInfo(
           `We sent a confirmation link to ${email.trim()} — tap it in your email and you'll come right back into the app. Check your inbox and spam folder.`
         );
@@ -104,6 +109,7 @@ export default function SignUp() {
       }
       const user = data.user;
       if (!user) {
+        if (referralCode.trim()) await stashPendingReferral(referralCode);
         setInfo(
           `We sent a confirmation link to ${email.trim()} — tap it in your email and you'll come right back into the app. Check your inbox and spam folder.`
         );

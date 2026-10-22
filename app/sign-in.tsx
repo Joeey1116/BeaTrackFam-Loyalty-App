@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { Screen } from '../components/Screen';
 import { Logo } from '../components/Logo';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import { ensureProfile } from '../lib/loyalty';
+import { applyPendingReferral, ensureProfile } from '../lib/loyalty';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -117,6 +117,13 @@ export default function SignIn() {
           if (data.user) await ensureProfile(data.user.id, email.trim());
         } catch {
           // Non-fatal: the home tab will show a signed-in state regardless.
+        }
+        // Apply a referral code stashed at sign-up if the confirmation deep
+        // link never ran on this device (e.g. confirmed on another device).
+        try {
+          if (data.user) await applyPendingReferral(data.user.id);
+        } catch {
+          // Non-fatal: the stash survives for a later sign-in.
         }
         router.replace('/(tabs)');
       }
