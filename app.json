@@ -7,7 +7,7 @@
       },
       "package": "com.beatrackfaminc.rewards",
       "permissions": [],
-      "versionCode": 8,
+      "versionCode": 9,
       "blockedPermissions": [
         "com.google.android.gms.permission.AD_ID"
       ]
@@ -74,7 +74,7 @@
     "scheme": "beatrackfamrewards",
     "slug": "beatrackfam-rewards",
     "userInterfaceStyle": "dark",
-    "version": "1.0",
+    "version": "2.0",
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
