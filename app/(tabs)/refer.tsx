@@ -3,15 +3,17 @@ import { ActivityIndicator, Alert, Share, StyleSheet, Text, TouchableOpacity, Vi
 import { useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Screen } from '../../components/Screen';
-import { DEMO_USER_ID, getProfile, type Profile } from '../../lib/loyalty';
+import { getProfile, type Profile } from '../../lib/loyalty';
 import { useAuth } from '../../lib/auth';
 
 export default function Refer() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   // Session state comes from AuthProvider — never resolved per-screen.
+  // The tabs layout guarantees a signed-in session (build 20); the ''
+  // fallback only covers the instant before the guard redirects.
   const { userId } = useAuth();
-  const uid = userId ?? DEMO_USER_ID;
+  const uid = userId ?? '';
 
   const refresh = useCallback(async () => {
     try {

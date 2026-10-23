@@ -5,7 +5,6 @@ import * as Clipboard from 'expo-clipboard';
 import { Screen } from '../../components/Screen';
 import { RewardCard } from '../../components/RewardCard';
 import {
-  DEMO_USER_ID,
   getProfile,
   getRedemptions,
   getRewards,
@@ -34,8 +33,10 @@ export default function Rewards() {
   // double-tap or flaky network can't mint two codes or deduct twice.
   const attemptKeys = useRef(new Map<string, string>());
   // Session state comes from AuthProvider — never resolved per-screen.
+  // The tabs layout guarantees a signed-in session (build 20); the ''
+  // fallback only covers the instant before the guard redirects.
   const { userId } = useAuth();
-  const uid = userId ?? DEMO_USER_ID;
+  const uid = userId ?? '';
 
   const refresh = useCallback(async () => {
     try {

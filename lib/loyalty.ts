@@ -459,6 +459,65 @@ export async function removeAvatar(
 /* Ledger                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * complete_redemption() historically wrote redemption debits to the
+ * ledger with the reason 'Redeemed reward <uuid>' — a raw id that must
+ * never reach the screen. Resolve those reasons to the reward's TITLE
+ * here, at the single read point every history view consumes, so rows
+ * written before the fix are healed too. Titles come from the user's
+ * own redemptions joined to the rewards table, with the rewards
+ * catalog as a second source; anything unresolvable degrades to a
+ * friendly label — never the UUID.
+ */
+const REDEEMED_REASON_RE =
+  /^Redeemed reward ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
+
+async function resolveRedeemedTitles(userId: string, entries: LedgerEntry[]): Promise<void> {
+  if (!supabase) return;
+  const wanted = new Set<string>();
+  for (const entry of entries) {
+    const m = REDEEMED_REASON_RE.exec(entry.reason);
+    if (m) wanted.add(m[1].toLowerCase());
+  }
+  if (wanted.size === 0) return;
+
+  const titles = new Map<string, string>();
+  try {
+    const { data } = await supabase
+      .from('redemptions')
+      .select('reward_id, rewards(title)')
+      .eq('user_id', userId)
+      .limit(200);
+    for (const row of data ?? []) {
+      const id = String((row as any).reward_id ?? '').toLowerCase();
+      const title = (row as any).rewards?.title as string | undefined;
+      if (id && title && wanted.has(id)) titles.set(id, title);
+    }
+  } catch {
+    // Fall through to the catalog lookup / friendly label.
+  }
+  const missing = [...wanted].filter((id) => !titles.has(id));
+  if (missing.length > 0) {
+    try {
+      const { data } = await supabase.from('rewards').select('id, title').in('id', missing);
+      for (const row of data ?? []) {
+        const id = String((row as any).id ?? '').toLowerCase();
+        const title = (row as any).title as string | undefined;
+        if (id && title) titles.set(id, title);
+      }
+    } catch {
+      // The friendly fallback below covers whatever is left.
+    }
+  }
+
+  for (const entry of entries) {
+    const m = REDEEMED_REASON_RE.exec(entry.reason);
+    if (!m) continue;
+    const title = titles.get(m[1].toLowerCase());
+    entry.reason = title ? `Redeemed: ${title}` : 'Reward redeemed';
+  }
+}
+
 export async function getLedger(userId: string): Promise<LedgerEntry[]> {
   if (!isSupabaseConfigured() || !supabase) {
     seedDemoStore();
@@ -470,13 +529,15 @@ export async function getLedger(userId: string): Promise<LedgerEntry[]> {
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(50);
-  return (data ?? []).map((row: any) => ({
+  const entries: LedgerEntry[] = (data ?? []).map((row: any) => ({
     id: row.id,
     userId: row.user_id,
     delta: row.delta,
     reason: row.reason,
     createdAt: row.created_at,
   }));
+  await resolveRedeemedTitles(userId, entries);
+  return entries;
 }
 
 /* ------------------------------------------------------------------ */

@@ -41,7 +41,8 @@ export interface AuthContextValue {
   status: AuthStatus;
   session: Session | null;
   user: User | null;
-  /** Signed-in user's id, or null (tabs fall back to the demo profile). */
+  /** Signed-in user's id, or null when signed out. The tabs are
+   * session-guarded (build 20) — a null id never reaches a tab screen. */
   userId: string | null;
   /** Signed-in user's email, or null. */
   email: string | null;

@@ -26,16 +26,10 @@ const STEPS = [
 export default function Onboarding() {
   const [page, setPage] = useState(0);
 
-  const skip = () => router.replace('/(tabs)');
-
+  // No Skip / guest entry (build 20): the tabs require a real signed-in
+  // account, so onboarding only leads to sign-up or sign-in.
   return (
     <Screen>
-      {page < 2 && (
-        <TouchableOpacity style={styles.skip} onPress={skip} activeOpacity={0.7}>
-          <Text style={styles.skipText}>Skip</Text>
-        </TouchableOpacity>
-      )}
-
       {page === 0 && (
         <View style={styles.page}>
           <View style={styles.hero}>
@@ -88,9 +82,6 @@ export default function Onboarding() {
           >
             <Text style={styles.secondaryText}>I have an account</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.look} onPress={skip} activeOpacity={0.7}>
-            <Text style={styles.lookText}>Take a look around first</Text>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -119,8 +110,6 @@ export default function Onboarding() {
 }
 
 const styles = StyleSheet.create({
-  skip: { alignSelf: 'flex-end', paddingVertical: 8, paddingHorizontal: 4 },
-  skipText: { color: '#888888', fontSize: 15, fontWeight: '600' },
   page: { flex: 1 },
   hero: { alignItems: 'center', marginTop: 24, marginBottom: 24 },
   brand: { color: '#888888', fontSize: 13, fontWeight: '800', letterSpacing: 4, marginTop: 20 },
@@ -163,8 +152,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   secondaryText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
-  look: { alignItems: 'center', paddingVertical: 12 },
-  lookText: { color: '#888888', fontSize: 14, fontWeight: '600' },
   footer: { paddingBottom: 8 },
   dots: { flexDirection: 'row', justifyContent: 'center', marginBottom: 20 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#333333', marginHorizontal: 5 },

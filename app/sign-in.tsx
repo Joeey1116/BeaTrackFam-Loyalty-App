@@ -142,23 +142,6 @@ export default function SignIn() {
         <Text style={styles.subline}>Your points missed you.</Text>
       </View>
 
-      {!configured && (
-        <View style={styles.demoBanner}>
-          <Text style={styles.demoTitle}>DEMO MODE</Text>
-          <Text style={styles.demoText}>
-            I have not connected the points database yet. You can look around with sample points —
-            nothing here is real or saved.
-          </Text>
-          <TouchableOpacity
-            style={styles.demoButton}
-            onPress={() => router.replace('/(tabs)')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.demoButtonText}>CONTINUE IN DEMO</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       <Text style={styles.label}>EMAIL</Text>
       <TextInput
         style={styles.input}
@@ -235,19 +218,6 @@ const styles = StyleSheet.create({
   hero: { alignItems: 'center', marginTop: 32, marginBottom: 28 },
   headline: { color: '#ffffff', fontSize: 30, fontWeight: '800', letterSpacing: 1, marginTop: 18 },
   subline: { color: '#888888', fontSize: 15, fontStyle: 'italic', marginTop: 8 },
-  demoBanner: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#3a3a3a',
-    marginBottom: 24,
-    alignItems: 'center',
-  },
-  demoTitle: { color: '#ffffff', fontSize: 13, fontWeight: '800', letterSpacing: 3, marginBottom: 8 },
-  demoText: { color: '#999999', fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 14 },
-  demoButton: { backgroundColor: '#ffffff', borderRadius: 12, paddingHorizontal: 20, paddingVertical: 12 },
-  demoButtonText: { color: '#000000', fontSize: 14, fontWeight: '800', letterSpacing: 1 },
   label: { color: '#888888', fontSize: 12, fontWeight: '700', letterSpacing: 2, marginBottom: 8, marginTop: 8 },
   input: {
     backgroundColor: '#111111',

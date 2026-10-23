@@ -4,7 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Screen } from '../../components/Screen';
 import { ActionRow } from '../../components/ActionRow';
-import { awardPoints, DEMO_USER_ID, getProfile, ONE_TIME_REASONS } from '../../lib/loyalty';
+import { awardPoints, getProfile, ONE_TIME_REASONS } from '../../lib/loyalty';
 import { useAuth } from '../../lib/auth';
 
 interface EarnAction {
@@ -22,8 +22,10 @@ export default function Earn() {
   const [claimed, setClaimed] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   // Session state comes from AuthProvider — never resolved per-screen.
+  // The tabs layout guarantees a signed-in session (build 20); the ''
+  // fallback only covers the instant before the guard redirects.
   const { userId } = useAuth();
-  const uid = userId ?? DEMO_USER_ID;
+  const uid = userId ?? '';
 
   const refresh = useCallback(async () => {
     const profile = await getProfile(uid).catch(() => null);

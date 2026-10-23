@@ -6,7 +6,6 @@ import { PointsCard } from '../../components/PointsCard';
 import { TierBar } from '../../components/TierBar';
 import { GlassCard } from '../../components/GlassCard';
 import {
-  DEMO_USER_ID,
   getLedger,
   getProfile,
   tierFor,
@@ -52,8 +51,10 @@ export default function Home() {
   const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   // Session state comes from AuthProvider — never resolved per-screen.
+  // The tabs layout guarantees a signed-in session (build 20); the ''
+  // fallback only covers the instant before the guard redirects.
   const { userId } = useAuth();
-  const authUid = userId ?? DEMO_USER_ID;
+  const authUid = userId ?? '';
   const uidRef = useRef<string>(authUid);
   uidRef.current = authUid;
 
@@ -70,7 +71,7 @@ export default function Home() {
       // crash is in this post-load async path. Re-enable only after
       // expo-widgets is fully configured and verified on a device build.
     } catch {
-      // Demo fallback keeps the screen alive even if something goes wrong.
+      // Keep the screen alive even if something goes wrong.
     } finally {
       setLoading(false);
     }
@@ -82,8 +83,8 @@ export default function Home() {
 
   // Reload when the signed-in identity changes under an already-mounted
   // Home (e.g. a confirmation deep link signs the user in while they were
-  // browsing in demo mode) — tab screens stay mounted, so without this
-  // the demo profile would stick.
+  // still on the auth screens) — tab screens stay mounted, so without
+  // this the previous identity's profile would stick.
   const seenUidRef = useRef<string | null>(null);
   useEffect(() => {
     if (seenUidRef.current === null) {

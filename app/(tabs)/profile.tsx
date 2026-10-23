@@ -7,7 +7,6 @@ import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import {
   awardPoints,
   BIRTHDAY_REASON,
-  DEMO_USER_ID,
   DISPLAY_NAME_MAX,
   getLedger,
   getProfile,
@@ -45,7 +44,9 @@ export default function ProfileScreen() {
   // profile?.email || sessionEmail || '—'), so a signed-in user never
   // sees "—".
   const { userId, email: sessionEmail } = useAuth();
-  const uid = userId ?? DEMO_USER_ID;
+  // The tabs layout guarantees a signed-in session (build 20); the ''
+  // fallback only covers the instant before the guard redirects.
+  const uid = userId ?? '';
 
   const refresh = useCallback(async () => {
     try {
@@ -259,24 +260,15 @@ export default function ProfileScreen() {
   }
 
   const tier = tierFor(profile?.points ?? 0);
-  // uid falls back to DEMO_USER_ID whenever there is no Supabase session
-  // (signed out, or Supabase unconfigured). Delete Account is an
-  // account-holder action, so it renders only for a real signed-in user.
-  const isSignedIn = uid !== DEMO_USER_ID;
+  // The tabs are session-guarded (build 20), so this screen only renders
+  // for a real signed-in user; this stays as a belt-and-braces check so
+  // the Delete Account action can never render without a session.
+  const isSignedIn = !!userId;
 
   return (
     <Screen>
       <Text style={styles.headline}>MY PROFILE.</Text>
       <Text style={styles.subline}>This is your corner of the Fam.</Text>
-
-      {!configured && (
-        <View style={styles.demoBanner}>
-          <Text style={styles.demoTitle}>DEMO MODE</Text>
-          <Text style={styles.demoText}>
-            Sample points, nothing saved. Connect the database to make it real.
-          </Text>
-        </View>
-      )}
 
       <View style={styles.card}>
         <View style={styles.identityRow}>
@@ -518,17 +510,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 120 },
   headline: { color: '#ffffff', fontSize: 30, fontWeight: '800', letterSpacing: 1, marginTop: 12 },
   subline: { color: '#888888', fontSize: 15, fontStyle: 'italic', marginTop: 6, marginBottom: 20 },
-  demoBanner: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#3a3a3a',
-    marginBottom: 16,
-    alignItems: 'center',
-  },
-  demoTitle: { color: '#ffffff', fontSize: 13, fontWeight: '800', letterSpacing: 3, marginBottom: 6 },
-  demoText: { color: '#999999', fontSize: 13, textAlign: 'center', lineHeight: 19 },
   card: {
     backgroundColor: '#111111',
     borderRadius: 16,

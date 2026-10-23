@@ -210,8 +210,11 @@ begin
   end if;
 
   if v_reward.cost > 0 then
+    -- Ledger reason carries the reward TITLE (build 20): history used to
+    -- render 'Redeemed reward <uuid>'. The client also resolves legacy
+    -- rows written in the old format (see lib/loyalty.ts getLedger).
     perform public.award_points(
-      p_user_id, -v_reward.cost, 'Redeemed reward ' || p_reward_id::text
+      p_user_id, -v_reward.cost, 'Redeemed: ' || v_reward.title
     );
   end if;
 
